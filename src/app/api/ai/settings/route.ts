@@ -93,14 +93,25 @@ export async function PATCH(req: NextRequest) {
   }
 
   if (result.error) {
-    // DB write failed (table missing, RLS blocked, etc.).
-    // Return a proper 500 so the client knows the save failed — NOT a
-    // silent 200 with a note (which caused the user to think their
-    // router settings were saved when they weren't).
+    // DB write failed. Detect common causes and give a helpful message.
+    const pgCode = result.error.code;
+    let helpfulMessage: string;
+    if (pgCode === "42P01" || /relation .* does not exist/i.test(result.error.message)) {
+      helpfulMessage =
+        "The ai_settings table does not exist in your Supabase project. " +
+        "Run the SQL migration file supabase/ai-tables.sql in your Supabase SQL Editor to create it.";
+    } else if (pgCode === "42501") {
+      helpfulMessage =
+        "Row-Level Security blocked the write. Make sure you're signed in and the ai_settings table has an RLS policy allowing your user to write. " +
+        "Original error: " + result.error.message;
+    } else {
+      helpfulMessage = result.error.message ?? "Failed to save AI settings (unknown cause).";
+    }
     return NextResponse.json(
       {
-        error: result.error.message ?? "Failed to save AI settings. Make sure the ai_settings table exists (run the SQL migration) and RLS allows your user to write.",
-        code: result.error.code,
+        error: helpfulMessage,
+        code: pgCode,
+        originalError: result.error.message,
       },
       { status: 500 },
     );

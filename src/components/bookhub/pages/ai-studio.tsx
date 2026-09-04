@@ -112,6 +112,11 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showSaveErrorPanel, setShowSaveErrorPanel] = useState(false);
+  // Auto-open the error panel whenever a NEW error arrives.
+  useEffect(() => {
+    if (saveError) setShowSaveErrorPanel(true);
+  }, [saveError]);
   // Track whether the initial load from the server has completed —
   // prevents the router auto-save from firing with empty data on mount.
   const loadedRef = useRef(false);
@@ -361,9 +366,13 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
         <div className="ml-auto flex items-center gap-2">
           {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
           {saveError && (
-            <span className="text-xs text-rose-400" title={saveError}>
-              ⚠ Save failed
-            </span>
+            <button
+              onClick={() => setShowSaveErrorPanel((s) => !s)}
+              className="text-xs text-rose-400 hover:text-rose-300"
+              title={saveError}
+            >
+              ⚠ Save failed ▾
+            </button>
           )}
           <button
             onClick={save}
@@ -374,6 +383,56 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
           </button>
         </div>
       </div>
+
+      {/* Save error detail panel (shown when saveError is set) */}
+      {saveError && showSaveErrorPanel && (
+        <div className="mb-4 rounded-lg border border-rose-500/40 bg-rose-500/10 p-4">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-semibold text-rose-300">
+                {saveError.toLowerCase().includes("ai_settings") || saveError.toLowerCase().includes("does not exist") || saveError.toLowerCase().includes("could not find")
+                  ? "Database table missing"
+                  : "Save failed"}
+              </div>
+              <p className="mt-1 text-[11px] leading-relaxed text-rose-200/90">
+                {saveError.toLowerCase().includes("ai_settings") || saveError.toLowerCase().includes("does not exist") || saveError.toLowerCase().includes("could not find")
+                  ? "The ai_settings table doesn't exist in your Supabase project yet. Run the SQL migration in your Supabase SQL Editor:"
+                  : "The settings couldn't be saved to the database. The backend returned:"}
+              </p>
+              {saveError.toLowerCase().includes("ai_settings") || saveError.toLowerCase().includes("does not exist") || saveError.toLowerCase().includes("could not find") ? (
+                <div className="mt-2 rounded-md border border-rose-400/30 bg-rose-500/5 p-2">
+                  <p className="text-[10px] font-mono text-rose-200/80">
+                    File: <span className="text-rose-100">supabase/ai-tables.sql</span>
+                  </p>
+                  <p className="mt-1 text-[10px] text-rose-200/70">
+                    Copy the contents of that file into Supabase SQL Editor → Run.
+                    This creates the ai_settings, ai_usage, and ai_cut_log tables.
+                  </p>
+                </div>
+              ) : (
+                <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-rose-500/10 p-2 text-[11px] text-rose-200/80">
+                  {saveError}
+                </pre>
+              )}
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  onClick={() => setShowSaveErrorPanel(false)}
+                  className="rounded-md border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-medium text-rose-200 hover:bg-rose-500/20"
+                >
+                  Dismiss
+                </button>
+                <button
+                  onClick={() => { setSaveError(null); setShowSaveErrorPanel(false); save(); }}
+                  className="rounded-md border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-medium text-rose-200 hover:bg-rose-500/20"
+                >
+                  Retry save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* FINGERPRINT TAB */}
       {tab === "fingerprint" && (
