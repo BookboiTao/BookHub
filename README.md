@@ -110,4 +110,4 @@ Visit the app. Sign up or sign in. Create a book. Start writing.
 - **Text**: `#f4f4f5` / `#9b9ba4` / `#6b6b75` (three tiers)
 - **Accent**: `#818cf8` (indigo — active states, links, focus rings only)
 - **Rules**: zero gradients, zero glow, zero shadow, 10px card radius, Geist sans for UI, serif for prose
-- folk
+- folk, folk update
