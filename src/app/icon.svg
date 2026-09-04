@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px"
+	 viewBox="0 0 32 32" xml:space="preserve">
+  <!-- BookHub favicon — matches the sidebar logo: open book in indigo on near-black -->
+  <rect width="32" height="32" rx="7" fill="#0c0c0e"/>
+  <g transform="translate(0 0)">
+    <!-- book pages (faint fill) -->
+    <path d="M16 7.5C14 6 11 5.5 7 6v15.5c4-.5 7 0 9 1.5 2-1.5 5-2 9-1.5V6c-4-.5-7 0-9 1.5z"
+          fill="#818cf8" fill-opacity="0.18"/>
+    <!-- book outline -->
+    <path d="M16 7.5C14 6 11 5.5 7 6v15.5c4-.5 7 0 9 1.5 2-1.5 5-2 9-1.5V6c-4-.5-7 0-9 1.5z"
+          fill="none" stroke="#818cf8" stroke-width="1.6" stroke-linejoin="round"/>
+    <!-- spine -->
+    <line x1="16" y1="8" x2="16" y2="23" stroke="#818cf8" stroke-width="1.6"/>
+  </g>
+</svg>

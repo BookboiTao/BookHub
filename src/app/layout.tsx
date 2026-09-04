@@ -28,7 +28,10 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "BookHub" }],
   applicationName: "BookHub",
-  icons: { icon: "/logo.svg" },
+  // Favicon is provided by src/app/icon.svg (Next.js App Router file
+  // convention). Next.js auto-generates the <link rel="icon"> tag with a
+  // versioned URL so browsers re-fetch when the file changes — no more
+  // stale "Z" favicon.
 };
 
 export default function RootLayout({
