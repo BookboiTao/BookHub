@@ -101,6 +101,7 @@ Visit the app. Sign up or sign in. Create a book. Start writing.
 - **Cloudflare**: via OpenNext (requires Hyperdrive or Prisma Accelerate for DB connections)
 - **Env vars**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_USER_ID`
 - Signups can be toggled in Supabase Dashboard → Authentication → Providers → Email
+- FICK
 
 ## Design System
 - **Background**: `#0c0c0e` (void black)
