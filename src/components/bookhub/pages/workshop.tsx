@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useBook, useUpdateBook, LoadingSpinner } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
+import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-banner";
 
 /* ------------------------------------------------------------------ *
  * WorkShop — the incubator.
@@ -68,7 +69,7 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
   const [entities, setEntities] = useState<ExtractedEntity[] | null>(null);
   const [extractedLinks, setExtractedLinks] = useState<ExtractedLink[]>([]);
   const [createdCardIds, setCreatedCardIds] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AiErrorInfo | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -125,7 +126,7 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
           // For PDF, read as text — works for some PDFs, otherwise show message
           text = await file.text();
           if (text.includes("%PDF")) {
-            setError("PDF text extraction is limited. For best results, copy-paste the text from your PDF into the notes.");
+            setError({ message: "PDF text extraction is limited. For best results, copy-paste the text from your PDF into the notes.", kind: "unknown" });
             continue;
           }
         } else {
@@ -139,7 +140,8 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to read file");
+      const msg = err instanceof Error ? err.message : "Failed to read file";
+      setError({ message: msg, kind: "unknown" });
     } finally {
       setUploading(false);
     }
@@ -205,7 +207,8 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
       const data = await res.json();
       setMessages((prev) => [...prev, { role: "assistant", content: data.text }]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      setError({ message: msg, kind: undefined });
     } finally {
       setLoading(false);
     }
@@ -245,10 +248,11 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
         setExtractedLinks(structured.links ?? []);
         setCreatedCardIds({});
       } else {
-        setError("AI returned an unexpected format. Try again.");
+        setError({ message: "AI returned an unexpected format. Try again.", kind: "unknown" });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Extraction failed");
+      const msg = err instanceof Error ? err.message : "Extraction failed";
+      setError({ message: msg, kind: undefined });
     } finally {
       setExtracting(false);
     }
@@ -279,7 +283,7 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
       }
       setEntities((prev) => prev?.filter((_, i) => i !== index) ?? null);
     } catch {
-      setError("Failed to create card");
+      setError({ message: "Failed to create card", kind: "unknown" });
     }
   }
 
@@ -414,6 +418,17 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
 
           {/* messages */}
           <div ref={scrollRef} className="bh-scroll flex-1 overflow-y-auto px-4 py-3">
+            {/* PROMINENT ERROR BANNER — sticky above the messages */}
+            {error && (
+              <div className="mb-3">
+                <AiErrorBanner
+                  key={`${error.kind ?? "unknown"}-${error.message.slice(0, 50)}`}
+                  error={error}
+                  bookId={bookId}
+                  onDismiss={() => setError(null)}
+                />
+              </div>
+            )}
             {messages.length === 0 && !loading && (
               <div className="flex h-full flex-col items-center justify-center text-center">
                 <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background">
@@ -474,12 +489,6 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
                 <div className="flex items-center gap-2 rounded-lg bg-card px-3 py-2 text-sm text-[var(--text-3)]">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   Thinking…
-                </div>
-              )}
-
-              {error && (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                  {error}
                 </div>
               )}
             </div>

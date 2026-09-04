@@ -1,19 +1,34 @@
 /* ------------------------------------------------------------------ *
- * provider-clients.ts — AI provider abstraction layer.
+ * provider-clients.ts — AI provider CLIENT implementations.
  *
- * Providers:
- *   - z.ai GLM (default, no key needed — uses z-ai-web-dev-sdk)
- *   - Google Gemini (needs API key — REST API via fetch)
+ * SERVER-ONLY. Imports z-ai-web-dev-sdk, which must never reach a
+ * client component. The pure data (MODEL_CATALOG, PROVIDER_NOTES,
+ * type defs, classifier) lives in ./provider-catalog.ts which is
+ * client-safe. Both server modules and client components import the
+ * catalog from there.
  *
  * To add more providers later (OpenRouter, Anthropic, OpenAI...):
- *   1. Add it to MODEL_CATALOG with `requiresApiKey` flag + model list.
+ *   1. Add an entry to MODEL_CATALOG in ./provider-catalog.ts.
  *   2. Add a `callXxx(shape, model, apiKey)` function below.
  *   3. Add it to the switch in callAI().
- *
- * All server-side only. Never imported in client code.
  * ------------------------------------------------------------------ */
 
 import ZAI from "z-ai-web-dev-sdk";
+// Re-export everything from the client-safe catalog so existing imports
+// from "@/lib/ai/provider-clients" keep working in server code.
+export {
+  MODEL_CATALOG,
+  ALL_PROVIDER_KEYS,
+  ALL_MODELS,
+  PROVIDER_NOTES,
+  providerForModel,
+  classifyAiError,
+  ERROR_HINTS,
+  type ProviderKey,
+  type AiErrorKind,
+} from "./provider-catalog";
+
+import { MODEL_CATALOG, providerForModel, type ProviderKey } from "./provider-catalog";
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant";
@@ -38,60 +53,12 @@ export type AIResponse = {
   };
 };
 
-export type ProviderKey = "zai" | "gemini";
-
-type ModelDef = { id: string; label: string };
-
-type ProviderDef = {
-  default: string;
-  label: string;
-  requiresApiKey: boolean;
-  models: ModelDef[];
-  helpUrl?: string;
-  keyHint?: string;
-};
-
-export const MODEL_CATALOG: Record<ProviderKey, ProviderDef> = {
-  zai: {
-    default: "glm-4-flash",
-    label: "z.ai GLM",
-    requiresApiKey: false,
-    models: [
-      { id: "glm-4-flash", label: "GLM-4-Flash (fast, free)" },
-      { id: "glm-4-plus", label: "GLM-4-Plus (higher quality)" },
-    ],
-  },
-  gemini: {
-    default: "gemini-2.0-flash",
-    label: "Google Gemini",
-    requiresApiKey: true,
-    helpUrl: "https://aistudio.google.com/apikey",
-    keyHint: "AIza…",
-    models: [
-      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash (fast, cheap)" },
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (balanced)" },
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (highest quality)" },
-      { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro (legacy)" },
-    ],
-  },
-};
-
-export const ALL_PROVIDER_KEYS: ProviderKey[] = Object.keys(MODEL_CATALOG) as ProviderKey[];
-
-export const ALL_MODELS: { provider: ProviderKey; model: ModelDef }[] = ALL_PROVIDER_KEYS.flatMap(
-  (provider) => MODEL_CATALOG[provider].models.map((model) => ({ provider, model })),
-);
-
-/**
- * Infer the provider from a model id. "gemini-*" → gemini, "glm-*" → z.ai.
- */
-export function providerForModel(model: string): ProviderKey {
-  if (model.startsWith("gemini")) return "gemini";
-  return "zai";
-}
-
 /* ------------------------------------------------------------------ *
  * z.ai — primary provider, no key needed
+ *
+ * The z-ai-web-dev-sdk reads /etc/.z-ai-config (provisioned automatically
+ * by the sandbox) which contains { baseUrl, apiKey }. We never see the
+ * key — the SDK uses it internally.
  * ------------------------------------------------------------------ */
 export async function callZai(
   shape: CallShape,

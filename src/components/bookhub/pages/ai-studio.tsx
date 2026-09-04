@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { PROVIDER_NOTES, type ProviderKey } from "@/lib/ai/provider-catalog";
 
 /* ------------------------------------------------------------------ *
  * AI Studio — the control room.
@@ -531,8 +532,9 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
 
 /* ------------------------------------------------------------------ *
  * RouterRow — model dropdown for one task. Shows all models from the
- * catalog. If a Gemini model is chosen but no key is set, warns the
- * user inline.
+ * catalog PLUS a "Custom model id" input so the user can type any
+ * model id (for future Gemini models like gemini-3.6-flash, or any
+ * other model we haven't added to the catalog yet).
  * ------------------------------------------------------------------ */
 function RouterRow({
   task,
@@ -545,38 +547,112 @@ function RouterRow({
   providerInfo: ProviderInfo[];
   onChange: (v: string) => void;
 }) {
+  const [showCustom, setShowCustom] = useState(false);
+  const [customDraft, setCustomDraft] = useState("");
+
+  // Is the current value a "custom" id (not in the catalog)?
+  const isCustom = Boolean(value) && !providerInfo.some((p) =>
+    p.models.some((m) => m.id === value),
+  );
+
   // Detect: chosen model belongs to a provider that needs a key + key missing
   const chosenInfo = providerInfo.find((p) =>
     p.models.some((m) => m.id === value),
   );
+  // For custom ids, infer provider from the model name prefix
+  const inferredProvider: ProviderKey | undefined = isCustom
+    ? (value.startsWith("gemini") ? "gemini" : value.startsWith("glm") ? "zai" : undefined)
+    : chosenInfo?.key as ProviderKey | undefined;
+  const inferredInfo = inferredProvider ? providerInfo.find((p) => p.key === inferredProvider) : undefined;
   const needsKeyButMissing =
-    chosenInfo?.requiresApiKey && !chosenInfo?.saved.hasKey && Boolean(value);
+    Boolean(value) &&
+    ((chosenInfo?.requiresApiKey && !chosenInfo?.saved.hasKey) ||
+     (isCustom && inferredInfo?.requiresApiKey && !inferredInfo?.saved.hasKey));
+
+  function commitCustom() {
+    const v = customDraft.trim();
+    if (!v) return;
+    onChange(v);
+    setShowCustom(false);
+  }
 
   return (
     <div className="flex flex-col gap-1 border-b border-border py-2 last:border-0">
       <div className="flex items-center gap-3">
         <span className="flex-1 text-sm text-foreground">{task.replace(/_/g, " ")}</span>
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:border-accent focus:outline-none"
-        >
-          <option value="">Default (GLM-4-Flash)</option>
-          {providerInfo.map((p) => (
-            <optgroup key={p.key} label={p.label}>
-              {p.models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}{p.requiresApiKey && !p.saved.hasKey ? " — key needed" : ""}
-                </option>
-              ))}
+        {showCustom ? (
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={customDraft}
+              onChange={(e) => setCustomDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitCustom();
+                if (e.key === "Escape") setShowCustom(false);
+              }}
+              placeholder="e.g. gemini-3.6-flash"
+              autoFocus
+              className="h-8 w-56 rounded-md border border-border bg-background px-2 text-xs text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none font-mono"
+            />
+            <button
+              onClick={commitCustom}
+              className="h-8 rounded-md bg-accent px-2 text-[10px] font-medium text-accent-foreground hover:bg-accent/90"
+            >
+              Set
+            </button>
+            <button
+              onClick={() => setShowCustom(false)}
+              className="h-8 rounded-md border border-border px-2 text-[10px] text-[var(--text-2)] hover:bg-[var(--surface-2)]"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <select
+            value={isCustom ? "__custom__" : value}
+            onChange={(e) => {
+              if (e.target.value === "__custom__") {
+                setCustomDraft(value && isCustom ? value : "");
+                setShowCustom(true);
+              } else {
+                onChange(e.target.value);
+              }
+            }}
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:border-accent focus:outline-none"
+          >
+            <option value="">Default (GLM-4-Flash)</option>
+            {providerInfo.map((p) => (
+              <optgroup key={p.key} label={p.label}>
+                {p.models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}{p.requiresApiKey && !p.saved.hasKey ? " — key needed" : ""}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+            <optgroup label="Custom">
+              <option value="__custom__">Custom model id…</option>
             </optgroup>
-          ))}
-        </select>
+          </select>
+        )}
       </div>
+      {/* Show the resolved custom id as a pill */}
+      {isCustom && !showCustom && (
+        <div className="flex items-center gap-1.5 pl-1 text-[11px]">
+          <span className="rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-2)]">
+            custom: {value}
+          </span>
+          {inferredProvider && (
+            <span className="text-[var(--text-3)]">
+              → inferred provider: {inferredInfo?.label ?? inferredProvider}
+            </span>
+          )}
+        </div>
+      )}
       {needsKeyButMissing && (
         <div className="flex items-center gap-1 pl-1 text-[11px] text-amber-400">
           <AlertTriangle className="h-3 w-3" />
-          No {chosenInfo.label} API key saved — this task will fail until you add one.
+          No {(inferredInfo ?? chosenInfo)?.label} API key saved — this task will fail until you add one.
         </div>
       )}
     </div>
@@ -611,9 +687,20 @@ function ProvidersTab({
           They never leave your browser except to save them.
         </p>
       </div>
-      {providerInfo.map((p) => (
-        <ProviderKeyCard key={p.key} info={p} onKeysChanged={onKeysChanged} />
-      ))}
+      {providerInfo.map((p) => {
+        const note = PROVIDER_NOTES[p.key as ProviderKey];
+        return (
+          <div key={p.key} className="space-y-2">
+            <ProviderKeyCard info={p} onKeysChanged={onKeysChanged} />
+            {note && (
+              <div className="rounded-md border border-border bg-background px-3 py-2 text-[11px] leading-relaxed text-[var(--text-3)]">
+                <span className="font-medium text-[var(--text-2)]">How it works: </span>
+                {note}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

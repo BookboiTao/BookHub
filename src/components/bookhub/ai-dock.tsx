@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Bot, X, Send, Loader2, Sparkles, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-banner";
 
 /* ------------------------------------------------------------------ *
  * AiDock — shared AI chat panel (right side, 400px).
@@ -69,7 +70,7 @@ export function AiDock({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AiErrorInfo | null>(null);
   const [brainstormLoading, setBrainstormLoading] = useState(false);
   const [brainstormResults, setBrainstormResults] = useState<
     { title: string; summary: string; body: string; tags: string[] }[] | null
@@ -129,7 +130,8 @@ export function AiDock({
         { role: "assistant", content: data.text, guard: data.guard },
       ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      setError({ message: msg, kind: undefined });
     } finally {
       setLoading(false);
     }
@@ -162,10 +164,11 @@ export function AiDock({
       if (Array.isArray(candidates)) {
         setBrainstormResults(candidates);
       } else {
-        setError("AI returned an unexpected format. Try again.");
+        setError({ message: "AI returned an unexpected format. Try again.", kind: "unknown" });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Brainstorm failed");
+      const msg = err instanceof Error ? err.message : "Brainstorm failed";
+      setError({ message: msg, kind: undefined });
     } finally {
       setBrainstormLoading(false);
     }
@@ -192,7 +195,7 @@ export function AiDock({
         prev?.filter((c) => c.title !== candidate.title) ?? null,
       );
     } catch {
-      setError("Failed to create card");
+      setError({ message: "Failed to create card", kind: "unknown" });
     }
   }
 
@@ -223,6 +226,19 @@ export function AiDock({
           {scope || "See what the AI will see."}
         </p>
       </div>
+
+      {/* PROMINENT ERROR BANNER — sticky above the messages */}
+      {error && (
+        <div className="shrink-0 border-b border-rose-500/20 px-3 py-2">
+          <AiErrorBanner
+            key={`${error.kind ?? "unknown"}-${error.message.slice(0, 50)}`}
+            error={error}
+            bookId={scopeData?.bookId}
+            onDismiss={() => setError(null)}
+            className="border-rose-500/30 bg-rose-500/5"
+          />
+        </div>
+      )}
 
       {/* messages */}
       <div ref={scrollRef} className="bh-scroll flex-1 overflow-y-auto px-4 py-3">
@@ -331,12 +347,6 @@ export function AiDock({
             <div className="flex items-center gap-2 rounded-lg bg-background px-3 py-2 text-sm text-[var(--text-3)]">
               <Loader2 className="h-3 w-3 animate-spin" />
               Thinking…
-            </div>
-          )}
-
-          {error && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              {error}
             </div>
           )}
         </div>

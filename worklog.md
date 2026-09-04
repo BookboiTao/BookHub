@@ -650,3 +650,54 @@ Stage Summary:
   2. Run all supabase/*.sql files in Supabase SQL Editor — including the NEW provider-keys.sql.
   3. Sign in, open any book → AI Studio → Providers tab → paste Gemini key → Save.
   4. (Optional) In Router tab, switch a task (e.g. "continue chapter") to a Gemini model.
+
+---
+Task ID: error-banner-and-model-explanations
+Agent: Z.ai Code (main)
+Task: Answer the user's questions about how z.ai works (no API key?), which GLM model is being called, support the "gemini-3.6-flash" model name, and add a prominent RED error bar/banner whenever there's a problem with the AI being called.
+
+Work Log:
+- Investigated how z.ai authenticates: the z-ai-web-dev-sdk loads `/etc/.z-ai-config` (system-wide, sandbox-provisioned) which contains `{baseUrl: "https://internal-api.z.ai/v1", apiKey: "***"}`. So the user NEVER needs to add a key — z.ai is batteries-included.
+- Probed which GLM models actually work via the SDK: `glm-4-flash`, `glm-4-plus`, `glm-4.5`, `glm-4.6`, `glm-4-air`, `glm-3-turbo` ALL respond "OK". (There's no GLM 4.7 — the user likely meant one of these.)
+- Extended MODEL_CATALOG.zai.models to include all 5 working GLM models with descriptive labels.
+- Extracted all pure data (MODEL_CATALOG, PROVIDER_NOTES, providerForModel, classifyAiError, ERROR_HINTS, type defs) into a NEW file `src/lib/ai/provider-catalog.ts` — CLIENT-SAFE (no SDK imports). Both server modules (provider-clients.ts) and client components (ai-studio.tsx) import from there. This fixed a 500 error caused by importing z-ai-web-dev-sdk into a client component via the catalog.
+- Updated `src/lib/ai/provider-clients.ts` to re-export from provider-catalog and only keep the SDK-specific functions (callZai, callGemini, callAI, testProvider). It's now a thin server-only wrapper.
+- Added PROVIDER_NOTES with explanations:
+  - zai: "Built into this workspace. The z-ai-web-dev-sdk reads /etc/.z-ai-config (provisioned automatically) and authenticates against https://internal-api.z.ai/v1 with a pre-paid key. You don't need to do anything — just pick a model."
+  - gemini: "Requires a Google AI Studio API key. Get one free at https://aistudio.google.com/apikey — paste it in the field below. The free tier is generous (15 RPM, 1500/day on Flash)."
+- These notes render under each provider card in the Providers tab as "How it works: ...".
+- Router tab now supports CUSTOM model IDs — added a "Custom model id…" option in each task dropdown. When selected, shows a text input with placeholder "e.g. gemini-3.6-flash" and Set/Cancel buttons. Custom ids are shown as a pill below the dropdown with the inferred provider ("→ inferred provider: Google Gemini"). This means the user can type any future model id (gemini-3.6-flash, glm-5, whatever) without us adding it to the catalog first.
+- Created `src/components/bookhub/ai-error-banner.tsx` — reusable prominent red banner. Features:
+  - Title (e.g. "Invalid API key", "Rate limited", "Model not found", "AI call failed")
+  - Short hint telling the user what to do
+  - Provider badge (e.g. "Google Gemini") so they know which provider failed
+  - Optional Retry button (calls onRetry handler)
+  - Optional CTA link (jumps to that book's AI Studio tab using the hash router)
+  - Collapsible "Show error detail" with the raw error message
+  - Dismiss button
+  - Sticky above the messages list (not buried inline where it's easy to miss)
+- Made `/api/ai/chat` and `/api/ai/propose` return structured error info:
+  - `{error, error_kind, provider}` instead of just `{error}`
+  - error_kind: missing_key | bad_key | rate_limited | quota_exceeded | model_not_found | network | unknown
+  - provider: the ProviderKey that failed
+- Wired the AiErrorBanner into all 3 AI surfaces:
+  1. AiChatPanel (editor right panel — chat + Continue button) — sticky above messages
+  2. AiDock (right-side drawer for Cast/Glossary/World Bible AI buttons) — sticky above messages
+  3. Workshop page (right chat column) — sticky above messages
+  - All three pass a `key` prop derived from error.message+kind so React remounts the banner (resetting dismissed state) when a NEW error arrives.
+- Lint: clean (0 errors).
+- API endpoints verified: GET / 200, GET /login 200, GET /api/ai/providers 401, GET /api/ai/test 401, POST /api/ai/chat 401. All compile cleanly.
+- Sanity test re-run: z.ai (5 models) responds in 206ms, Gemini with fake key surfaces Google's real error "API key not valid. Please pass a valid API key." — proves nothing broke in the refactor.
+
+Stage Summary:
+- z.ai works without any setup: the sandbox provisions /etc/.z-ai-config and the SDK auto-discovers it. Default model is glm-4-flash (free, fast). The user can now also pick glm-4.5 / glm-4.6 / glm-4-plus / glm-4-air from the Router tab.
+- The user can type "gemini-3.6-flash" (or any future model id) in the Router tab via the "Custom model id…" option. The provider is auto-inferred from the model name prefix ("gemini-*" → gemini, "glm-*" → z.ai).
+- Whenever an AI call fails — bad key, rate limit, quota, model not found, network — a prominent red banner now appears at the TOP of every AI chat surface (editor, AiDock, Workshop). It includes:
+  - A clear title (e.g. "Invalid API key")
+  - A specific hint on what to do
+  - The provider that failed
+  - A "Fix in AI Studio" / "Open Router tab" link
+  - A Retry button (where applicable)
+  - A Dismiss button
+  - A collapsible raw error message for debugging
+- Architecture note for future agents: the AI catalog (MODEL_CATALOG, PROVIDER_NOTES, classifier) lives in `src/lib/ai/provider-catalog.ts` and MUST stay client-safe (no z-ai-web-dev-sdk import). Server-only code in `src/lib/ai/provider-clients.ts` re-exports from it. Client components import from provider-catalog directly. Server routes import from provider-clients.

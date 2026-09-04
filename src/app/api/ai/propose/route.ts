@@ -91,6 +91,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             error: `Router is set to use ${MODEL_CATALOG[p].label} for this task, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`,
+            error_kind: "missing_key",
+            provider: p,
           },
           { status: 400 },
         );
@@ -99,15 +101,33 @@ export async function POST(req: NextRequest) {
   }
 
   // Call the AI
-  const response = await callAI(
-    {
-      system: ctx.system,
-      messages: [{ role: "user", content: userMessage }],
-      temperature: action === "continue_chapter" ? 0.8 : 0.6,
-      maxTokens: action === "brainstorm_tab" ? 2000 : 1500,
-    },
-    { model: routerModel, apiKeys },
-  );
+  let response;
+  try {
+    response = await callAI(
+      {
+        system: ctx.system,
+        messages: [{ role: "user", content: userMessage }],
+        temperature: action === "continue_chapter" ? 0.8 : 0.6,
+        maxTokens: action === "brainstorm_tab" ? 2000 : 1500,
+      },
+      { model: routerModel, apiKeys },
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const lower = msg.toLowerCase();
+    let kind: string = "unknown";
+    if (lower.includes("api key not valid") || lower.includes("api_key_invalid")) kind = "bad_key";
+    else if (lower.includes("429") || lower.includes("too many requests")) kind = "rate_limited";
+    else if (lower.includes("quota") || lower.includes("billing")) kind = "quota_exceeded";
+    else if (lower.includes("not found") || lower.includes("404")) kind = "model_not_found";
+    else if (lower.includes("fetch") || lower.includes("network")) kind = "network";
+
+    const provider = routerModel ? providerForModel(routerModel) : "zai";
+    return NextResponse.json(
+      { error: msg, error_kind: kind, provider },
+      { status: 500 },
+    );
+  }
 
   // Run guard on prose output (skip for structured JSON outputs)
   const guardViolations = action === "continue_chapter" ? checkProse(response.text) : [];

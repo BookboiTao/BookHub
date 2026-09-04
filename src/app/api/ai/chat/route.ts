@@ -80,6 +80,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             error: `Router is set to use ${MODEL_CATALOG[p].label} for chat, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`,
+            error_kind: "missing_key",
+            provider: p,
           },
           { status: 400 },
         );
@@ -88,27 +90,45 @@ export async function POST(req: NextRequest) {
   }
 
   // Call the AI
-  const response = await callAI(
-    {
-      system,
-      messages: fullMessages,
-      temperature: 0.7,
-      maxTokens: 2000,
-    },
-    { model: routerModel, apiKeys },
-  );
+  try {
+    const response = await callAI(
+      {
+        system,
+        messages: fullMessages,
+        temperature: 0.7,
+        maxTokens: 2000,
+      },
+      { model: routerModel, apiKeys },
+    );
 
-  // Run guard on AI output
-  const violations = checkProse(response.text);
+    // Run guard on AI output
+    const violations = checkProse(response.text);
 
-  return NextResponse.json({
-    text: response.text,
-    meta: {
-      provider: response.provider,
-      model: response.model,
-      usage: response.usage,
-      contextLayers,
-    },
-    guard: violations.length > 0 ? violations : undefined,
-  });
+    return NextResponse.json({
+      text: response.text,
+      meta: {
+        provider: response.provider,
+        model: response.model,
+        usage: response.usage,
+        contextLayers,
+      },
+      guard: violations.length > 0 ? violations : undefined,
+    });
+  } catch (err) {
+    // Classify the error so the frontend can show the right recovery hint.
+    const msg = err instanceof Error ? err.message : String(err);
+    const lower = msg.toLowerCase();
+    let kind: string = "unknown";
+    if (lower.includes("api key not valid") || lower.includes("api_key_invalid")) kind = "bad_key";
+    else if (lower.includes("429") || lower.includes("too many requests")) kind = "rate_limited";
+    else if (lower.includes("quota") || lower.includes("billing")) kind = "quota_exceeded";
+    else if (lower.includes("not found") || lower.includes("404")) kind = "model_not_found";
+    else if (lower.includes("fetch") || lower.includes("network")) kind = "network";
+
+    const provider = routerModel ? providerForModel(routerModel) : "zai";
+    return NextResponse.json(
+      { error: msg, error_kind: kind, provider },
+      { status: 500 },
+    );
+  }
 }

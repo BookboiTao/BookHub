@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Bot, Send, Sparkles, AlertTriangle, Check, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-banner";
 
 /* ------------------------------------------------------------------ *
  * AiChatPanel — real chat interface for the editor AI tab.
@@ -57,7 +58,8 @@ export function AiChatPanel({
   const [loading, setLoading] = useState(false);
   const [continueLoading, setContinueLoading] = useState(false);
   const [showContext, setShowContext] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AiErrorInfo | null>(null);
+  const [lastChatText, setLastChatText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new messages
@@ -76,6 +78,7 @@ export function AiChatPanel({
     setInput("");
     setLoading(true);
     setError(null);
+    setLastChatText(text);
 
     try {
       const res = await fetch("/api/ai/chat", {
@@ -102,7 +105,11 @@ export function AiChatPanel({
         { role: "assistant", content: data.text, guard: data.guard },
       ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      setError({ message: msg, kind: undefined });
+      // Re-inject the user message so they can edit & resend
+      setMessages((prev: ChatMessage[]) => prev.slice(0, -1));
+      setInput(text);
     } finally {
       setLoading(false);
     }
@@ -135,7 +142,8 @@ export function AiChatPanel({
         guard: data.guard,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      setError({ message: msg, kind: undefined });
     } finally {
       setContinueLoading(false);
     }
@@ -198,6 +206,19 @@ export function AiChatPanel({
           </div>
         )}
       </div>
+
+      {/* PROMINENT ERROR BANNER — sticky above the messages */}
+      {error && (
+        <div className="shrink-0 border-b border-rose-500/20 px-3 py-2">
+          <AiErrorBanner
+            key={`${error.kind ?? "unknown"}-${error.message.slice(0, 50)}`}
+            error={error}
+            bookId={bookId}
+            onDismiss={() => setError(null)}
+            className="border-rose-500/30 bg-rose-500/5"
+          />
+        </div>
+      )}
 
       {/* messages */}
       <div ref={scrollRef} className="bh-scroll flex-1 overflow-y-auto px-4 py-3">
@@ -302,12 +323,6 @@ export function AiChatPanel({
                   <X className="h-3 w-3" /> Discard
                 </button>
               </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              {error}
             </div>
           )}
         </div>
