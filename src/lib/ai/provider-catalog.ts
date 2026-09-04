@@ -41,9 +41,11 @@ export const MODEL_CATALOG: Record<ProviderKey, ProviderDef> = {
     helpUrl: "https://aistudio.google.com/apikey",
     keyHint: "AIza…",
     models: [
-      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash (fast, cheap)" },
+      { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash (newest, Aug 2026)" },
+      { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash (Jul 2026, workhorse)" },
       { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (balanced)" },
       { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (highest quality)" },
+      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash (fast, cheap)" },
       { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro (legacy)" },
     ],
   },
