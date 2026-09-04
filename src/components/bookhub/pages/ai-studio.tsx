@@ -6,22 +6,26 @@ import {
   Plus,
   Trash2,
   Loader2,
-  Check,
-  X,
   Activity,
+  KeyRound,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  AlertTriangle,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ *
- * AI Studio — the control room. Now live.
- * 
- * 4 tabs: Fingerprint / Constitution / Router / Usage
+ * AI Studio — the control room.
+ *
+ * 5 tabs: Fingerprint / Providers / Constitution / Router / Usage
  * - Fingerprint: voice/pacing/tone + samples, saves to /api/ai/settings
+ * - Providers: per-user API keys (Gemini etc.) — /api/ai/providers
  * - Constitution: rules from seed, toggle active, add/edit/delete
- * - Router: task→model mapping (currently all z.ai)
+ * - Router: task→model mapping (z.ai always, Gemini if a key is set)
  * - Usage: fetches from ai_usage table, shows per-provider totals
- * 
+ *
  * Provider status row on top: hits /api/ai/test on load.
  * ------------------------------------------------------------------ */
 
@@ -39,10 +43,26 @@ type Fingerprint = {
   samples: { id: string; label: string; text: string }[];
 };
 
+type ProviderModel = { id: string; label: string };
+
+type ProviderInfo = {
+  key: string;
+  label: string;
+  requiresApiKey: boolean;
+  helpUrl: string | null;
+  keyHint: string | null;
+  models: ProviderModel[];
+  defaultModel: string;
+  saved: { hasKey: boolean; last4: string | null; updatedAt: string | null };
+};
+
 type ProviderStatus = {
   provider: string;
+  label: string;
   ok: boolean;
   latencyMs: number;
+  requiresKey: boolean;
+  hasKey: boolean;
   error?: string;
 };
 
@@ -73,11 +93,15 @@ const FINGERPRINT_SEED: Fingerprint = {
   samples: [],
 };
 
-type Tab = "fingerprint" | "constitution" | "router" | "usage";
+const TASKS = ["chat", "brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check"] as const;
+type Task = typeof TASKS[number];
+
+type Tab = "fingerprint" | "providers" | "constitution" | "router" | "usage";
 
 export function AIStudioPage({ bookId }: { bookId: string }) {
   const [tab, setTab] = useState<Tab>("fingerprint");
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
+  const [providerInfo, setProviderInfo] = useState<ProviderInfo[]>([]);
   const [testing, setTesting] = useState(false);
   const [constitution, setConstitution] = useState<ConstitutionRule[]>(CONSTITUTION_SEED);
   const [fingerprint, setFingerprint] = useState<Fingerprint>(FINGERPRINT_SEED);
@@ -87,13 +111,14 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // Load settings + test providers on mount
+  // Load settings + provider info + test providers on mount
   useEffect(() => {
     async function load() {
       setLoading(true);
       try {
-        const [settingsRes, testRes] = await Promise.all([
+        const [settingsRes, providersRes, testRes] = await Promise.all([
           fetch(`/api/ai/settings?bookId=${bookId}`),
+          fetch("/api/ai/providers"),
           fetch("/api/ai/test"),
         ]);
         if (settingsRes.ok) {
@@ -101,6 +126,10 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
           if (data.constitution) setConstitution(data.constitution);
           if (data.fingerprint) setFingerprint(data.fingerprint);
           if (data.router) setRouter(data.router);
+        }
+        if (providersRes.ok) {
+          const data = await providersRes.json();
+          if (data.providers) setProviderInfo(data.providers);
         }
         if (testRes.ok) {
           const data = await testRes.json();
@@ -165,6 +194,34 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
     }
   }
 
+  // After a key is saved/removed in the Providers tab, refresh both
+  // the provider info list and re-run the smoke test.
+  const onProviderKeysChanged = useCallback(async () => {
+    try {
+      const [providersRes, testRes] = await Promise.all([
+        fetch("/api/ai/providers"),
+        fetch("/api/ai/test"),
+      ]);
+      if (providersRes.ok) {
+        const data = await providersRes.json();
+        if (data.providers) setProviderInfo(data.providers);
+      }
+      if (testRes.ok) {
+        const data = await testRes.json();
+        setProviders(data.providers ?? []);
+      }
+    } catch {
+      // silent
+    }
+  }, []);
+
+  // Helper: does the user have a saved key for a given provider?
+  const hasKeyFor = useCallback(
+    (providerKey: string) =>
+      providerInfo.find((p) => p.key === providerKey)?.saved.hasKey ?? false,
+    [providerInfo],
+  );
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -184,31 +241,53 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
       </div>
 
       {/* provider status */}
-      <div className="mb-6 flex items-center gap-3 rounded-lg border border-border bg-card p-3">
+      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3">
         <div className="flex items-center gap-2">
           <Activity className="h-3.5 w-3.5 text-[var(--text-3)]" />
           <span className="text-xs font-medium text-[var(--text-2)]">Providers</span>
         </div>
         {providers.map((p) => (
           <div key={p.provider} className="flex items-center gap-1.5">
-            <span className={cn("h-2 w-2 rounded-full", p.ok ? "bg-emerald-500" : "bg-rose-500")} />
-            <span className="text-xs text-[var(--text-2)]">{p.provider}</span>
+            <span
+              className={cn(
+                "h-2 w-2 rounded-full",
+                p.ok
+                  ? "bg-emerald-500"
+                  : p.requiresKey && !p.hasKey
+                    ? "bg-[var(--text-3)]"
+                    : "bg-rose-500",
+              )}
+            />
+            <span className="text-xs text-[var(--text-2)]">{p.label}</span>
             {p.ok && <span className="text-[10px] text-[var(--text-3)]">{p.latencyMs}ms</span>}
-            {!p.ok && <span className="text-[10px] text-rose-400">error</span>}
+            {!p.ok && p.requiresKey && !p.hasKey && (
+              <span className="text-[10px] text-[var(--text-3)]">no key</span>
+            )}
+            {!p.ok && p.hasKey && (
+              <span className="text-[10px] text-rose-400" title={p.error}>error</span>
+            )}
           </div>
         ))}
-        <button
-          onClick={retestProviders}
-          disabled={testing}
-          className="ml-auto text-xs text-[var(--text-3)] hover:text-foreground"
-        >
-          {testing ? "Testing…" : "Retest"}
-        </button>
+        <div className="ml-auto flex items-center gap-3">
+          <button
+            onClick={() => setTab("providers")}
+            className="flex items-center gap-1 text-xs text-accent hover:underline"
+          >
+            <KeyRound className="h-3 w-3" /> Manage keys
+          </button>
+          <button
+            onClick={retestProviders}
+            disabled={testing}
+            className="text-xs text-[var(--text-3)] hover:text-foreground"
+          >
+            {testing ? "Testing…" : "Retest"}
+          </button>
+        </div>
       </div>
 
       {/* tabs */}
       <div className="mb-6 flex items-center gap-1 border-b border-border">
-        {(["fingerprint", "constitution", "router", "usage"] as Tab[]).map((t) => (
+        {(["fingerprint", "providers", "constitution", "router", "usage"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -218,6 +297,9 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
             )}
           >
             {t}
+            {t === "providers" && providerInfo.some((p) => p.requiresApiKey && !p.saved.hasKey) && (
+              <span className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-accent align-middle" />
+            )}
             {tab === t && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-accent" />}
           </button>
         ))}
@@ -293,7 +375,7 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
                       samples: fingerprint.samples.map((x, j) => j === i ? { ...x, label: e.target.value } : x),
                     })}
                     placeholder="Label"
-                    className="w-1/3 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:border-accent focus:outline-none"
+                    className="w-1/3 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
                   />
                   <input
                     value={s.text}
@@ -302,7 +384,7 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
                       samples: fingerprint.samples.map((x, j) => j === i ? { ...x, text: e.target.value } : x),
                     })}
                     placeholder="Sample text…"
-                    className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:border-accent focus:outline-none"
+                    className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
                   />
                   <button
                     onClick={() => setFingerprint({ ...fingerprint, samples: fingerprint.samples.filter((_, j) => j !== i) })}
@@ -320,11 +402,19 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
         </div>
       )}
 
+      {/* PROVIDERS TAB */}
+      {tab === "providers" && (
+        <ProvidersTab
+          providerInfo={providerInfo}
+          onKeysChanged={onProviderKeysChanged}
+        />
+      )}
+
       {/* CONSTITUTION TAB */}
       {tab === "constitution" && (
         <div className="space-y-2">
           {constitution.map((rule, i) => (
-            <div key={rule.id} className="flex items-start gap-3 rounded-lg border border-border bg-card p-3">
+            <div key={rule.id} className="group flex items-start gap-3 rounded-lg border border-border bg-card p-3">
               <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted text-[10px] font-mono text-[var(--text-2)]">
                 {i + 1}
               </div>
@@ -332,15 +422,21 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
                 <input
                   value={rule.text}
                   onChange={(e) => setConstitution(constitution.map((r, j) => j === i ? { ...r, text: e.target.value } : r))}
-                  className="w-full bg-transparent text-sm text-foreground focus:outline-none"
+                  placeholder="Type your rule here…"
+                  className="w-full rounded-sm border border-transparent bg-transparent px-1.5 py-1 text-sm text-foreground placeholder:text-[var(--text-3)] hover:border-[var(--edge)] focus:border-accent focus:bg-background focus:outline-none"
                 />
-                <div className="mt-1 flex items-center gap-2">
-                  <span className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                    rule.enforcement === "code" ? "bg-accent/15 text-accent" : "bg-muted text-[var(--text-2)]",
-                  )}>
-                    {rule.enforcement === "code" ? "code-checkable" : "prompt"}
-                  </span>
+                <div className="mt-1 flex items-center gap-2 px-1.5">
+                  <select
+                    value={rule.enforcement}
+                    onChange={(e) => setConstitution(constitution.map((r, j) => j === i ? { ...r, enforcement: e.target.value as "prompt" | "code" } : r))}
+                    className={cn(
+                      "rounded px-1.5 py-0.5 text-[10px] font-medium bg-transparent focus:outline-none cursor-pointer",
+                      rule.enforcement === "code" ? "text-accent" : "text-[var(--text-2)]",
+                    )}
+                  >
+                    <option value="prompt">prompt</option>
+                    <option value="code">code-checkable</option>
+                  </select>
                 </div>
               </div>
               <Switch
@@ -356,7 +452,7 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
             </div>
           ))}
           <button
-            onClick={() => setConstitution([...constitution, { id: `rule-${Date.now()}`, text: "New rule", enforcement: "prompt", active: true }])}
+            onClick={() => setConstitution([...constitution, { id: `rule-${Date.now()}`, text: "", enforcement: "prompt", active: true }])}
             className="flex items-center gap-1.5 text-xs text-accent hover:underline"
           >
             <Plus className="h-3 w-3" /> Add rule
@@ -369,22 +465,21 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
         <div className="space-y-3">
           <div className="rounded-lg border border-border bg-card p-4">
             <p className="mb-3 text-xs text-[var(--text-3)]">
-              All tasks currently route to z.ai GLM-4-Flash (free tier, fast). When more providers are added, you can route different tasks to different models.
+              Route each task to a specific model. z.ai GLM is always available (free, no key). Gemini models need an API key — add one in the <button onClick={() => setTab("providers")} className="text-accent hover:underline">Providers tab</button>.
             </p>
-            {["chat", "brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check"].map((task) => (
-              <div key={task} className="flex items-center gap-3 border-b border-border py-2 last:border-0">
-                <span className="flex-1 text-sm text-foreground">{task.replace(/_/g, " ")}</span>
-                <select
-                  value={router[task] ?? "glm-4-flash"}
-                  onChange={(e) => setRouter({ ...router, [task]: e.target.value })}
-                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:border-accent focus:outline-none"
-                >
-                  <option value="glm-4-flash">GLM-4-Flash (z.ai)</option>
-                  <option value="glm-4-plus">GLM-4-Plus (z.ai, higher quality)</option>
-                </select>
-              </div>
+            {TASKS.map((task) => (
+              <RouterRow
+                key={task}
+                task={task}
+                value={router[task] ?? ""}
+                providerInfo={providerInfo}
+                onChange={(v) => setRouter({ ...router, [task]: v })}
+              />
             ))}
           </div>
+          <p className="text-xs text-[var(--text-3)]">
+            Tasks without a chosen model use the provider&apos;s default. The <span className="text-[var(--text-2)]">chat</span> task covers the AI dock in the editor and the Workshop.
+          </p>
         </div>
       )}
 
@@ -429,6 +524,253 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
             </>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * RouterRow — model dropdown for one task. Shows all models from the
+ * catalog. If a Gemini model is chosen but no key is set, warns the
+ * user inline.
+ * ------------------------------------------------------------------ */
+function RouterRow({
+  task,
+  value,
+  providerInfo,
+  onChange,
+}: {
+  task: string;
+  value: string;
+  providerInfo: ProviderInfo[];
+  onChange: (v: string) => void;
+}) {
+  // Detect: chosen model belongs to a provider that needs a key + key missing
+  const chosenInfo = providerInfo.find((p) =>
+    p.models.some((m) => m.id === value),
+  );
+  const needsKeyButMissing =
+    chosenInfo?.requiresApiKey && !chosenInfo?.saved.hasKey && Boolean(value);
+
+  return (
+    <div className="flex flex-col gap-1 border-b border-border py-2 last:border-0">
+      <div className="flex items-center gap-3">
+        <span className="flex-1 text-sm text-foreground">{task.replace(/_/g, " ")}</span>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:border-accent focus:outline-none"
+        >
+          <option value="">Default (GLM-4-Flash)</option>
+          {providerInfo.map((p) => (
+            <optgroup key={p.key} label={p.label}>
+              {p.models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}{p.requiresApiKey && !p.saved.hasKey ? " — key needed" : ""}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
+      {needsKeyButMissing && (
+        <div className="flex items-center gap-1 pl-1 text-[11px] text-amber-400">
+          <AlertTriangle className="h-3 w-3" />
+          No {chosenInfo.label} API key saved — this task will fail until you add one.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * ProvidersTab — manage per-user API keys for each provider.
+ * ------------------------------------------------------------------ */
+function ProvidersTab({
+  providerInfo,
+  onKeysChanged,
+}: {
+  providerInfo: ProviderInfo[];
+  onKeysChanged: () => Promise<void>;
+}) {
+  if (providerInfo.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-border p-8 text-center">
+        <KeyRound className="mx-auto mb-3 h-6 w-6 text-[var(--text-3)]" />
+        <p className="text-sm text-[var(--text-2)]">No providers configured.</p>
+        <p className="mt-1 text-xs text-[var(--text-3)]">Reload the page to fetch provider list.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-[var(--surface-2)] p-3">
+        <p className="text-xs text-[var(--text-2)]">
+          Keys are stored in your Supabase project, isolated to your account via Row-Level Security.
+          They never leave your browser except to save them.
+        </p>
+      </div>
+      {providerInfo.map((p) => (
+        <ProviderKeyCard key={p.key} info={p} onKeysChanged={onKeysChanged} />
+      ))}
+    </div>
+  );
+}
+
+function ProviderKeyCard({
+  info,
+  onKeysChanged,
+}: {
+  info: ProviderInfo;
+  onKeysChanged: () => Promise<void>;
+}) {
+  const [draftKey, setDraftKey] = useState("");
+  const [show, setShow] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (!draftKey.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/ai/providers", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: info.key, apiKey: draftKey.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error ?? `HTTP ${res.status}`);
+      }
+      setDraftKey("");
+      setShow(false);
+      await onKeysChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRemove() {
+    setRemoving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/ai/providers?provider=${info.key}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error ?? `HTTP ${res.status}`);
+      }
+      await onKeysChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-foreground">{info.label}</h3>
+            {info.requiresApiKey ? (
+              info.saved.hasKey ? (
+                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                  key saved{info.saved.last4 ? ` · ··${info.saved.last4}` : ""}
+                </span>
+              ) : (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
+                  no key
+                </span>
+              )
+            ) : (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
+                built-in · no key needed
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-[var(--text-3)]">
+            {info.models.length} model{info.models.length === 1 ? "" : "s"} available
+            {info.saved.updatedAt ? ` · last updated ${new Date(info.saved.updatedAt).toLocaleString()}` : ""}
+          </p>
+        </div>
+        {info.helpUrl && (
+          <a
+            href={info.helpUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-xs text-accent hover:underline"
+          >
+            Get key <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+      </div>
+
+      {/* models list */}
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {info.models.map((m) => (
+          <span
+            key={m.id}
+            className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-[var(--text-2)]"
+          >
+            {m.label}
+          </span>
+        ))}
+      </div>
+
+      {info.requiresApiKey ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <input
+                type={show ? "text" : "password"}
+                value={draftKey}
+                onChange={(e) => setDraftKey(e.target.value)}
+                placeholder={info.keyHint ? `Paste your key (${info.keyHint})` : "Paste your API key"}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 pr-9 text-sm text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none font-mono"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                onClick={() => setShow((s) => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-foreground"
+                tabIndex={-1}
+              >
+                {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <button
+              onClick={handleSave}
+              disabled={saving || !draftKey.trim()}
+              className="rounded-md bg-accent px-3 py-2 text-xs font-medium text-accent-foreground hover:bg-accent/90 disabled:opacity-40"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            {info.saved.hasKey && (
+              <button
+                onClick={handleRemove}
+                disabled={removing}
+                className="rounded-md border border-border px-3 py-2 text-xs font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-foreground disabled:opacity-40"
+              >
+                {removing ? "Removing…" : "Remove"}
+              </button>
+            )}
+          </div>
+          {error && <p className="text-xs text-rose-400">{error}</p>}
+          <p className="text-[11px] text-[var(--text-3)]">
+            Save replaces any existing key for this provider.
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-[var(--text-3)]">
+          This provider is configured at the platform level — no key needed from you.
+        </p>
       )}
     </div>
   );

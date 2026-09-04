@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/supabase-server";
-import { callAI } from "@/lib/ai/provider-clients";
-import { buildMessages, type Scope } from "@/lib/ai/context-builder";
+import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
+import { callAI, providerForModel, MODEL_CATALOG, type ProviderKey } from "@/lib/ai/provider-clients";
+import { buildMessages, getAISettings, type Scope } from "@/lib/ai/context-builder";
 import { checkProse } from "@/lib/ai/guard";
 import { z } from "zod";
 
@@ -20,9 +20,30 @@ const chatSchema = z.object({
   })),
 });
 
+/**
+ * Loads the user's saved API keys for every provider that requires one.
+ * Returns a map suitable for passing into callAI({ apiKeys }).
+ */
+async function loadUserApiKeys(userId: string): Promise<Partial<Record<ProviderKey, string>>> {
+  const supabase = await createSupabaseServer();
+  const { data: rows } = await supabase
+    .from("ai_provider_keys")
+    .select("provider, api_key")
+    .eq("user_id", userId);
+
+  const keys: Partial<Record<ProviderKey, string>> = {};
+  for (const r of rows ?? []) {
+    if (r.api_key) {
+      keys[r.provider as ProviderKey] = r.api_key;
+    }
+  }
+  return keys;
+}
+
 export async function POST(req: NextRequest) {
   const userOr401 = await requireUser();
   if (userOr401 instanceof Response) return userOr401;
+  const user = userOr401;
 
   const body = await req.json().catch(() => null);
   const parsed = chatSchema.safeParse(body);
@@ -44,13 +65,38 @@ export async function POST(req: NextRequest) {
   // Assemble context + messages
   const { system, messages: fullMessages, contextLayers } = await buildMessages(scope, messages);
 
+  // Consult the router for the model to use for chat
+  const settings = await getAISettings(bookId);
+  const router = (settings.router ?? {}) as Record<string, string>;
+  const routerModel = router.chat;
+
+  // If the router points to a provider that needs a key, load the user's keys.
+  let apiKeys: Partial<Record<ProviderKey, string>> = {};
+  if (routerModel) {
+    const p = providerForModel(routerModel);
+    if (MODEL_CATALOG[p].requiresApiKey) {
+      apiKeys = await loadUserApiKeys(user.id);
+      if (!apiKeys[p]) {
+        return NextResponse.json(
+          {
+            error: `Router is set to use ${MODEL_CATALOG[p].label} for chat, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+  }
+
   // Call the AI
-  const response = await callAI({
-    system,
-    messages: fullMessages,
-    temperature: 0.7,
-    maxTokens: 2000,
-  });
+  const response = await callAI(
+    {
+      system,
+      messages: fullMessages,
+      temperature: 0.7,
+      maxTokens: 2000,
+    },
+    { model: routerModel, apiKeys },
+  );
 
   // Run guard on AI output
   const violations = checkProse(response.text);

@@ -601,3 +601,52 @@ Stage Summary:
   - Glossary: table (unchanged)
 - Card/link DATA is identical across all views — only the rendering changes. The `useBibleTabState` hook ensures all views share the same state management, mutations, and persistence.
 - Drawer (CardDrawer), delete confirm, connection label popover all work identically across canvas + grid + timeline views.
+
+---
+Task ID: gemini-providers
+Agent: Z.ai Code (main)
+Task: Fix Supabase env error, add Gemini (and future multi-model) provider support so the user can plug their Gemini API key into the website via AI Studio, and fix the Constitution rules input bug ("+" adds a rule but can't type in it).
+
+Work Log:
+- Restored `/home/z/my-project/.env` with the Supabase URL + anon key (it gets wiped on sandbox reset). Also kept DATABASE_URL and SUPABASE_USER_ID.
+- Extended `src/lib/ai/provider-clients.ts`:
+  - MODEL_CATALOG now contains `zai` (keyless) and `gemini` (key required, 4 models: 2.0-flash, 2.5-flash, 2.5-pro, 1.5-pro).
+  - Added `callGemini(shape, model, apiKey)` using fetch against `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}` — no new npm deps.
+  - Maps the OpenAI-style messages to Gemini's `contents` array (assistant→"model" role), supports `systemInstruction`, parses `usageMetadata` for token counts.
+  - Added `providerForModel(model)` that infers provider from the model id prefix ("gemini-*" → gemini, else z.ai).
+  - `callAI()` now accepts `apiKeys?: Partial<Record<ProviderKey, string>>` and dispatches to the right provider based on the model id. If the router says "gemini-2.5-flash" for a task, callAI picks gemini automatically.
+  - `testProvider()` returns `{provider, label, ok, latencyMs, requiresKey, hasKey, error?}` — short-circuits with `hasKey=false` for key-required providers when no key is saved (no network call).
+- Created `supabase/provider-keys.sql` — `ai_provider_keys` table (user_id, provider, api_key, label, unique(user_id, provider)) with RLS so users only see their own keys. Reuses the `bh_set_updated_at()` trigger from schema.sql.
+- Added `/api/ai/providers` route (GET list masked, PATCH upsert, DELETE) — keys are returned as `{hasKey, last4, updatedAt}` only, never the raw key.
+- Added `/api/ai/test` route — loads the user's keys, then `Promise.all(testProvider)` over every provider in MODEL_CATALOG.
+- Updated `/api/ai/chat` and `/api/ai/propose`:
+  - Both now load the user's API keys from `ai_provider_keys` before calling.
+  - Both consult the router (`router[task]` or `router.chat`) to pick the model.
+  - If the router points to a key-required provider and the user has no key, returns 400 with a clear "add your key in AI Studio → Providers" message instead of crashing on the call.
+- Rewrote `src/components/bookhub/pages/ai-studio.tsx`:
+  - Tab order is now Fingerprint / Providers / Constitution / Router / Usage.
+  - "Providers" tab: per-provider cards. For Gemini (key required) shows password input with show/hide toggle, Save/Remove buttons, "Get key" link to https://aistudio.google.com/apikey, key status pill ("key saved ··XXXX" / "no key"), model list, and last-updated timestamp. For z.ai (keyless) shows a "built-in · no key needed" pill.
+  - The "Providers" tab pill in the tab strip gets an indigo dot when a key-required provider is unconfigured.
+  - Provider status row at the top now distinguishes "no key" (grey dot, no error) from "error" (red dot) and adds a "Manage keys" link that jumps to the Providers tab.
+  - Router tab: each task row now uses a grouped `<select>` (optgroup per provider) listing ALL models from the catalog. If a Gemini model is selected but no key is set, an inline amber warning shows below that row.
+  - Constitution tab bug fix: the rule input now has visible hover/focus styling (border goes from transparent → edge on hover, accent + bg-background on focus). The enforcement badge is now a clickable `<select>` so users can switch between "prompt" and "code-checkable". "Add rule" now creates a rule with EMPTY text and a placeholder ("Type your rule here…") instead of the literal string "New rule", so it's obvious the field is editable.
+- Sanity-tested the Gemini client end-to-end with `scripts/test-gemini-client.ts`:
+  - z.ai: ok=true, 417ms
+  - Gemini with FAKE key: surfaces Google's real error "API key not valid. Please pass a valid API key." — proves URL, request body, and error parsing all work.
+  - Gemini with NO key: short-circuits with hasKey=false, 0ms latency.
+- Lint: clean (0 errors).
+- API endpoints verified via curl (return 401 unauth, which proves the route exists + auth guard fires): /api/ai/providers, /api/ai/test, /api/ai/chat, /api/ai/settings.
+- Pages compile cleanly: GET / 200 (25KB HTML), GET /login 200, GET /signup 200.
+
+Stage Summary:
+- The "@supabase/ssr: Your project's URL and API key are required" error is fixed — .env is restored.
+- The user can now add their Gemini API key entirely through the website: AI Studio → Providers tab → paste key → Save. No code edits, no .env changes needed.
+- Multi-model routing works: in the Router tab, each task (chat, brainstorm_tab, continue_chapter, etc.) can be set to use any z.ai or Gemini model. The Router picks the provider automatically based on the model name.
+- Architecture for adding MORE providers (OpenRouter, Anthropic, OpenAI) later: add an entry to MODEL_CATALOG, add a `callXxx()` function, add it to the switch in callAI(). That's it — every UI surface (Providers tab, Router tab, status row) updates automatically from MODEL_CATALOG.
+- The Constitution rules input is now obviously editable: transparent border → grey border on hover → accent border on focus, with a placeholder for new rules.
+- DATABASE MIGRATION REQUIRED FOR DEPLOYMENT: the user must run `supabase/provider-keys.sql` in their Supabase SQL Editor before Gemini keys can be saved. (All other tables are already there.)
+- Production deployment checklist for the user:
+  1. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY on the hosting platform (Vercel/etc.)
+  2. Run all supabase/*.sql files in Supabase SQL Editor — including the NEW provider-keys.sql.
+  3. Sign in, open any book → AI Studio → Providers tab → paste Gemini key → Save.
+  4. (Optional) In Router tab, switch a task (e.g. "continue chapter") to a Gemini model.

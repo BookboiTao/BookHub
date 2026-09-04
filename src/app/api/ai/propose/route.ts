@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
-import { callAI } from "@/lib/ai/provider-clients";
-import { buildBookContext, type Scope, CONSTITUTION_SEED, FINGERPRINT_SEED } from "@/lib/ai/context-builder";
+import { callAI, providerForModel, MODEL_CATALOG, type ProviderKey } from "@/lib/ai/provider-clients";
+import { buildBookContext, getAISettings, type Scope } from "@/lib/ai/context-builder";
 import { checkProse } from "@/lib/ai/guard";
 import { z } from "zod";
 
@@ -27,9 +27,29 @@ const TASK_PROMPTS: Record<string, string> = {
   extract_entities: "Scan the workshop notes and conversation for structured worldbuilding entities that could become World Bible cards. Extract people (characters), places (geography), organizations (factions), magical systems, historical events, and creatures. Also detect relationships between the entities you extract. Return as JSON object: {\"entities\":[{\"title\":\"...\",\"summary\":\"...\",\"body\":\"...\",\"category\":\"magic|cosmology|geography|factions|history|bestiary|character\",\"tags\":[\"...\"]}],\"links\":[{\"from\":\"Entity Title A\",\"to\":\"Entity Title B\",\"label\":\"relationship type\"}]}. Only include entities with enough detail to warrant a card. Links reference entities by their title. Return ONLY the JSON object.",
 };
 
+/**
+ * Loads the user's saved API keys for every provider that requires one.
+ */
+async function loadUserApiKeys(userId: string): Promise<Partial<Record<ProviderKey, string>>> {
+  const supabase = await createSupabaseServer();
+  const { data: rows } = await supabase
+    .from("ai_provider_keys")
+    .select("provider, api_key")
+    .eq("user_id", userId);
+
+  const keys: Partial<Record<ProviderKey, string>> = {};
+  for (const r of rows ?? []) {
+    if (r.api_key) {
+      keys[r.provider as ProviderKey] = r.api_key;
+    }
+  }
+  return keys;
+}
+
 export async function POST(req: NextRequest) {
   const userOr401 = await requireUser();
   if (userOr401 instanceof Response) return userOr401;
+  const user = userOr401;
 
   const body = await req.json().catch(() => null);
   const parsed = proposeSchema.safeParse(body);
@@ -52,24 +72,45 @@ export async function POST(req: NextRequest) {
 
   // Build the task prompt
   const taskPrompt = TASK_PROMPTS[action] ?? "";
-  const userMessage = extra 
+  const userMessage = extra
     ? `${taskPrompt}\n\nAdditional instruction from the writer: ${extra}`
     : taskPrompt;
 
+  // Consult router for the model to use for this action
+  const settings = await getAISettings(bookId);
+  const router = (settings.router ?? {}) as Record<string, string>;
+  const routerModel = router[action];
+
+  // Load API keys if the chosen model needs one
+  let apiKeys: Partial<Record<ProviderKey, string>> = {};
+  if (routerModel) {
+    const p = providerForModel(routerModel);
+    if (MODEL_CATALOG[p].requiresApiKey) {
+      apiKeys = await loadUserApiKeys(user.id);
+      if (!apiKeys[p]) {
+        return NextResponse.json(
+          {
+            error: `Router is set to use ${MODEL_CATALOG[p].label} for this task, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+  }
+
   // Call the AI
-  const response = await callAI({
-    system: ctx.system,
-    messages: [
-      { role: "user", content: userMessage },
-    ],
-    temperature: action === "continue_chapter" ? 0.8 : 0.6,
-    maxTokens: action === "brainstorm_tab" ? 2000 : 1500,
-  });
+  const response = await callAI(
+    {
+      system: ctx.system,
+      messages: [{ role: "user", content: userMessage }],
+      temperature: action === "continue_chapter" ? 0.8 : 0.6,
+      maxTokens: action === "brainstorm_tab" ? 2000 : 1500,
+    },
+    { model: routerModel, apiKeys },
+  );
 
   // Run guard on prose output (skip for structured JSON outputs)
-  const guardViolations = action === "continue_chapter" 
-    ? checkProse(response.text)
-    : [];
+  const guardViolations = action === "continue_chapter" ? checkProse(response.text) : [];
 
   // Parse structured responses
   let structured: unknown = undefined;
@@ -87,7 +128,6 @@ export async function POST(req: NextRequest) {
 
   // Log usage
   const supabase = await createSupabaseServer();
-  const user = userOr401;
   await supabase.from("ai_usage").insert({
     book_id: bookId,
     user_id: user.id,
