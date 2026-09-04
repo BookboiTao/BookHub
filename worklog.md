@@ -701,3 +701,34 @@ Stage Summary:
   - A Dismiss button
   - A collapsible raw error message for debugging
 - Architecture note for future agents: the AI catalog (MODEL_CATALOG, PROVIDER_NOTES, classifier) lives in `src/lib/ai/provider-catalog.ts` and MUST stay client-safe (no z-ai-web-dev-sdk import). Server-only code in `src/lib/ai/provider-clients.ts` re-exports from it. Client components import from provider-catalog directly. Server routes import from provider-clients.
+
+---
+Task ID: routing-clarity-and-fallback
+Agent: Z.ai Code (main)
+Task: User saw the "AI call failed: Configuration file not found" error again, asked "is this for gemini" — confusion about which provider failed. Make sure routing is correct and these issues don't surface again.
+
+Work Log:
+- Diagnosed: the screenshot showed the z.ai SDK init error ("Configuration file not found or invalid. Please create .z-ai-config...") but my classifier was returning kind="unknown", so the banner showed generic "AI call failed" with no provider hint. The user thought it was a Gemini issue because they have a Gemini key saved — they didn't realize the call was actually hitting z.ai (the default).
+- Added new error kind `sdk_init_failed` to provider-catalog.ts:
+  - classifyAiError now detects "configuration file not found" or ".z-ai-config" substrings → returns {kind: "sdk_init_failed", provider: "zai"}
+  - ERROR_HINTS.sdk_init_failed: title="z.ai unavailable in this environment", hint="The built-in z.ai provider couldn't read its config file. If you have a Gemini API key saved, switch this task to a Gemini model in the Router tab — Gemini will work without z.ai.", cta="Open Router tab"
+- Updated ai-error-banner.tsx ERROR_META with the new sdk_init_failed kind — same title/hint/CTA, links to the book's AI Studio.
+- Refactored both chat and propose routes to:
+  - Use the shared classifyAiError() classifier instead of duplicated inline substring matching (single source of truth).
+  - Always load the user's API keys up front (was conditional before) — needed for the fallback path.
+  - GRACEFUL FALLBACK: when z.ai fails with sdk_init_failed AND the user has a Gemini key saved AND the router hasn't explicitly routed this task elsewhere, automatically retry the call with Gemini's default model. The response includes `meta.fallback = true` and `meta.fallbackReason` so the UI can show "used Gemini instead" if desired.
+  - If Gemini fallback also fails, returns a clear error mentioning BOTH failures.
+- Verified the classifier with 3 unit tests via bun:
+  - z.ai SDK init error → kind=sdk_init_failed, provider=zai ✅
+  - Gemini bad key → kind=bad_key ✅
+  - 429 rate limit → kind=rate_limited ✅
+- Cleaned up the temporary /api/ai/debug endpoint (was used to verify the Turbopack fix in the previous commit).
+- Lint: clean (0 errors).
+- All API routes verified: GET / 200, POST /api/ai/chat 401 (unauth=ok), POST /api/ai/propose 401 (unauth=ok).
+
+Stage Summary:
+- Routing correctness confirmed: when the user routes a task to Gemini in the Router tab, callAI dispatches to callGemini only — z.ai is never touched. The z.ai SDK import at the top of provider-clients.ts is lazy (ZAI.create() only runs inside callZai), so just importing the module doesn't trigger the config read.
+- The "AI call failed" error the user kept seeing was z.ai failing because the SDK couldn't init (env issue, possibly transient or stale Turbopack bundle). The Turbopack serverExternalPackages fix from the previous commit addresses the root cause; this commit adds defense-in-depth:
+  1. CLEARER MESSAGING: the banner now says "z.ai unavailable in this environment" instead of generic "AI call failed", and explicitly tells the user to switch to Gemini in the Router tab.
+  2. AUTO-FALLBACK: if z.ai is unavailable and the user has a Gemini key, the call automatically retries with Gemini — no manual action needed. The user gets their AI response without ever seeing the error.
+- This means: even if z.ai breaks again in the future (SDK update, sandbox reset, env quirk), as long as the user has a Gemini key saved, all AI features keep working transparently. The error banner only shows if BOTH providers fail.

@@ -3,6 +3,7 @@ import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
 import { callAI, providerForModel, MODEL_CATALOG, type ProviderKey } from "@/lib/ai/provider-clients";
 import { buildBookContext, getAISettings, type Scope } from "@/lib/ai/context-builder";
 import { checkProse } from "@/lib/ai/guard";
+import { classifyAiError } from "@/lib/ai/provider-catalog";
 import { z } from "zod";
 
 const proposeSchema = z.object({
@@ -81,22 +82,23 @@ export async function POST(req: NextRequest) {
   const router = (settings.router ?? {}) as Record<string, string>;
   const routerModel = router[action];
 
-  // Load API keys if the chosen model needs one
-  let apiKeys: Partial<Record<ProviderKey, string>> = {};
+  // Always load the user's API keys — needed for the fallback path
+  // (if z.ai fails with sdk_init_failed and the user has a Gemini key,
+  // we retry the call with Gemini).
+  const apiKeys = await loadUserApiKeys(user.id);
+
+  // If the router points to a provider that needs a key, validate it's present.
   if (routerModel) {
     const p = providerForModel(routerModel);
-    if (MODEL_CATALOG[p].requiresApiKey) {
-      apiKeys = await loadUserApiKeys(user.id);
-      if (!apiKeys[p]) {
-        return NextResponse.json(
-          {
-            error: `Router is set to use ${MODEL_CATALOG[p].label} for this task, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`,
-            error_kind: "missing_key",
-            provider: p,
-          },
-          { status: 400 },
-        );
-      }
+    if (MODEL_CATALOG[p].requiresApiKey && !apiKeys[p]) {
+      return NextResponse.json(
+        {
+          error: `Router is set to use ${MODEL_CATALOG[p].label} for this task, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`,
+          error_kind: "missing_key",
+          provider: p,
+        },
+        { status: 400 },
+      );
     }
   }
 
@@ -113,20 +115,45 @@ export async function POST(req: NextRequest) {
       { model: routerModel, apiKeys },
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const lower = msg.toLowerCase();
-    let kind: string = "unknown";
-    if (lower.includes("api key not valid") || lower.includes("api_key_invalid")) kind = "bad_key";
-    else if (lower.includes("429") || lower.includes("too many requests")) kind = "rate_limited";
-    else if (lower.includes("quota") || lower.includes("billing")) kind = "quota_exceeded";
-    else if (lower.includes("not found") || lower.includes("404")) kind = "model_not_found";
-    else if (lower.includes("fetch") || lower.includes("network")) kind = "network";
+    // Classify the error using the shared classifier.
+    const info = classifyAiError(err);
 
-    const provider = routerModel ? providerForModel(routerModel) : "zai";
-    return NextResponse.json(
-      { error: msg, error_kind: kind, provider },
-      { status: 500 },
-    );
+    // GRACEFUL FALLBACK: if z.ai failed because the SDK couldn't init
+    // and the user has a Gemini key saved, retry the call with Gemini.
+    if (info.kind === "sdk_init_failed" && apiKeys.gemini && !routerModel) {
+      try {
+        const fallbackModel = MODEL_CATALOG.gemini.default;
+        response = await callAI(
+          {
+            system: ctx.system,
+            messages: [{ role: "user", content: userMessage }],
+            temperature: action === "continue_chapter" ? 0.8 : 0.6,
+            maxTokens: action === "brainstorm_tab" ? 2000 : 1500,
+          },
+          { model: fallbackModel, apiKeys },
+        );
+        // Continue processing the fallback response below.
+      } catch (fallbackErr) {
+        const fbInfo = classifyAiError(fallbackErr);
+        return NextResponse.json(
+          {
+            error: `z.ai failed (${info.message}) AND Gemini fallback failed (${fbInfo.message}). Add a valid Gemini API key in AI Studio → Providers.`,
+            error_kind: fbInfo.kind,
+            provider: "gemini",
+          },
+          { status: 500 },
+        );
+      }
+    } else {
+      return NextResponse.json(
+        {
+          error: info.message,
+          error_kind: info.kind,
+          provider: info.provider ?? (routerModel ? providerForModel(routerModel) : "zai"),
+        },
+        { status: 500 },
+      );
+    }
   }
 
   // Run guard on prose output (skip for structured JSON outputs)

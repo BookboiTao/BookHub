@@ -93,6 +93,7 @@ export type AiErrorKind =
   | "quota_exceeded"
   | "model_not_found"
   | "network"
+  | "sdk_init_failed"
   | "unknown";
 
 export const ERROR_HINTS: Record<AiErrorKind, { title: string; hint: string; cta: string | null }> = {
@@ -126,6 +127,11 @@ export const ERROR_HINTS: Record<AiErrorKind, { title: string; hint: string; cta
     hint: "Couldn't reach the provider. Check your connection and try again.",
     cta: null,
   },
+  sdk_init_failed: {
+    title: "z.ai unavailable in this environment",
+    hint: "The built-in z.ai provider couldn't read its config file. If you have a Gemini API key saved, switch this task to a Gemini model in the Router tab — Gemini will work without z.ai.",
+    cta: "Open Router tab",
+  },
   unknown: {
     title: "AI call failed",
     hint: "An unexpected error occurred. Try again, or check AI Studio → Providers.",
@@ -144,6 +150,12 @@ export function classifyAiError(error: unknown): {
   const msg = error instanceof Error ? error.message : String(error);
   const lower = msg.toLowerCase();
 
+  // z-ai SDK init failure — the SDK couldn't read /etc/.z-ai-config.
+  // This is distinct from a bad_key (which is the API rejecting a key).
+  // Surface it specifically so the user knows to switch to Gemini.
+  if (lower.includes("configuration file not found") || lower.includes(".z-ai-config")) {
+    return { kind: "sdk_init_failed", message: msg, provider: "zai" };
+  }
   if (lower.includes("api key not valid") || lower.includes("api_key_invalid") || lower.includes("unauthorized")) {
     return { kind: "bad_key", message: msg };
   }
