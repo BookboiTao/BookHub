@@ -34,18 +34,15 @@ export const MODEL_CATALOG: Record<ProviderKey, ProviderDef> = {
     ],
   },
   gemini: {
-    default: "gemini-2.0-flash",
+    default: "gemini-3.6-flash",
     label: "Google Gemini",
     requiresApiKey: true,
     helpUrl: "https://aistudio.google.com/apikey",
     keyHint: "AIza…",
     models: [
-      { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash (newest, Aug 2026)" },
-      { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash (Jul 2026, workhorse)" },
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (balanced)" },
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (highest quality)" },
-      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash (fast, cheap)" },
-      { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro (legacy)" },
+      { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash (newest, free tier)" },
+      { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash (workhorse, free tier)" },
+      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash (free tier)" },
     ],
   },
 };
@@ -64,7 +61,7 @@ export const PROVIDER_NOTES: Record<ProviderKey, string> = {
   zai:
     "Requires a Z.ai API key (free to create). Sign up at https://z.ai/model-api, then create a key at https://z.ai/manage-apikey/apikey-list and paste it below. Both models listed here (GLM-4.5-Flash and GLM-4.7-Flash) are free to use.",
   gemini:
-    "Requires a Google AI Studio API key. Get one free at https://aistudio.google.com/apikey — paste it in the field below. The free tier is generous (15 RPM, 1500/day on Flash).",
+    "Requires a Google AI Studio API key. Get one free at https://aistudio.google.com/apikey — paste it in the field below. The Flash models listed here (3.5/3.6/3.7) are all on the free tier with rate limits; Pro models and older Flash versions have been dropped since they're paid or no longer reliable on the free tier.",
 };
 
 /**
