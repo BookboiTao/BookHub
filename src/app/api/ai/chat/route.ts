@@ -41,15 +41,6 @@ async function loadUserApiKeys(userId: string): Promise<Partial<Record<ProviderK
   return keys;
 }
 
-/**
- * Classify an error using the shared classifier in provider-catalog.ts.
- * Keeps the route handler in sync with the catalog without duplicating
- * the substring matching logic.
- */
-function classify(err: unknown) {
-  return classifyAiError(err);
-}
-
 export async function POST(req: NextRequest) {
   const userOr401 = await requireUser();
   if (userOr401 instanceof Response) return userOr401;
@@ -122,58 +113,12 @@ export async function POST(req: NextRequest) {
         model: response.model,
         usage: response.usage,
         contextLayers,
-        ...(routerModel ? {} : { fallbackNote: "Used default provider" }),
       },
       guard: violations.length > 0 ? violations : undefined,
     });
   } catch (err) {
-    // Classify the error using the shared classifier.
-    const info = classify(err);
-
-    // GRACEFUL FALLBACK: if z.ai failed because the SDK couldn't init
-    // (e.g. /etc/.z-ai-config not readable in some environment), and the
-    // user has a Gemini key saved, retry the call with Gemini's default
-    // model. The user is not routed to Gemini explicitly, so this is a
-    // best-effort recovery — we tell them we did it.
-    if (info.kind === "sdk_init_failed" && apiKeys.gemini && !routerModel) {
-      try {
-        const fallbackModel = MODEL_CATALOG.gemini.default;
-        const response = await callAI(
-          {
-            system,
-            messages: fullMessages,
-            temperature: 0.7,
-            maxTokens: 2000,
-          },
-          { model: fallbackModel, apiKeys },
-        );
-        const violations = checkProse(response.text);
-        return NextResponse.json({
-          text: response.text,
-          meta: {
-            provider: response.provider,
-            model: response.model,
-            usage: response.usage,
-            contextLayers,
-            fallback: true,
-            fallbackReason: "z.ai SDK was unavailable — used Gemini instead. To use Gemini permanently, route the chat task to a Gemini model in AI Studio → Router.",
-          },
-          guard: violations.length > 0 ? violations : undefined,
-        });
-      } catch (fallbackErr) {
-        // Gemini also failed — fall through to return the original error
-        const fbInfo = classify(fallbackErr);
-        return NextResponse.json(
-          {
-            error: `z.ai failed (${info.message}) AND Gemini fallback failed (${fbInfo.message}). Add a valid Gemini API key in AI Studio → Providers.`,
-            error_kind: fbInfo.kind,
-            provider: "gemini",
-          },
-          { status: 500 },
-        );
-      }
-    }
-
+    // Classify the error so the frontend can show the right recovery hint.
+    const info = classifyAiError(err);
     return NextResponse.json(
       {
         error: info.message,

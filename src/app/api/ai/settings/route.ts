@@ -93,13 +93,17 @@ export async function PATCH(req: NextRequest) {
   }
 
   if (result.error) {
-    // Table might not exist yet — return seed data as fallback
-    return NextResponse.json({
-      constitution: constitution ?? CONSTITUTION_SEED,
-      fingerprint: fingerprint ?? FINGERPRINT_SEED,
-      router: router ?? {},
-      note: "ai_settings table not found — using in-memory defaults. Run the SQL migration.",
-    });
+    // DB write failed (table missing, RLS blocked, etc.).
+    // Return a proper 500 so the client knows the save failed — NOT a
+    // silent 200 with a note (which caused the user to think their
+    // router settings were saved when they weren't).
+    return NextResponse.json(
+      {
+        error: result.error.message ?? "Failed to save AI settings. Make sure the ai_settings table exists (run the SQL migration) and RLS allows your user to write.",
+        code: result.error.code,
+      },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({

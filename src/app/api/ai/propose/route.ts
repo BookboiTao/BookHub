@@ -115,45 +115,16 @@ export async function POST(req: NextRequest) {
       { model: routerModel, apiKeys },
     );
   } catch (err) {
-    // Classify the error using the shared classifier.
+    // Classify the error so the frontend can show the right recovery hint.
     const info = classifyAiError(err);
-
-    // GRACEFUL FALLBACK: if z.ai failed because the SDK couldn't init
-    // and the user has a Gemini key saved, retry the call with Gemini.
-    if (info.kind === "sdk_init_failed" && apiKeys.gemini && !routerModel) {
-      try {
-        const fallbackModel = MODEL_CATALOG.gemini.default;
-        response = await callAI(
-          {
-            system: ctx.system,
-            messages: [{ role: "user", content: userMessage }],
-            temperature: action === "continue_chapter" ? 0.8 : 0.6,
-            maxTokens: action === "brainstorm_tab" ? 2000 : 1500,
-          },
-          { model: fallbackModel, apiKeys },
-        );
-        // Continue processing the fallback response below.
-      } catch (fallbackErr) {
-        const fbInfo = classifyAiError(fallbackErr);
-        return NextResponse.json(
-          {
-            error: `z.ai failed (${info.message}) AND Gemini fallback failed (${fbInfo.message}). Add a valid Gemini API key in AI Studio → Providers.`,
-            error_kind: fbInfo.kind,
-            provider: "gemini",
-          },
-          { status: 500 },
-        );
-      }
-    } else {
-      return NextResponse.json(
-        {
-          error: info.message,
-          error_kind: info.kind,
-          provider: info.provider ?? (routerModel ? providerForModel(routerModel) : "zai"),
-        },
-        { status: 500 },
-      );
-    }
+    return NextResponse.json(
+      {
+        error: info.message,
+        error_kind: info.kind,
+        provider: info.provider ?? (routerModel ? providerForModel(routerModel) : "zai"),
+      },
+      { status: 500 },
+    );
   }
 
   // Run guard on prose output (skip for structured JSON outputs)

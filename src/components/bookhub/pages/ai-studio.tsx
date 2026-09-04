@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Bot,
   Plus,
@@ -111,6 +111,12 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Track whether the initial load from the server has completed —
+  // prevents the router auto-save from firing with empty data on mount.
+  const loadedRef = useRef(false);
+  // Track the last router JSON we saved, so we don't re-save unchanged.
+  const lastSavedRouterRef = useRef<string>("");
 
   // Load settings + provider info + test providers on mount
   useEffect(() => {
@@ -126,7 +132,10 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
           const data = await settingsRes.json();
           if (data.constitution) setConstitution(data.constitution);
           if (data.fingerprint) setFingerprint(data.fingerprint);
-          if (data.router) setRouter(data.router);
+          if (data.router) {
+            setRouter(data.router);
+            lastSavedRouterRef.current = JSON.stringify(data.router);
+          }
         }
         if (providersRes.ok) {
           const data = await providersRes.json();
@@ -140,6 +149,7 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
         // silent fail — settings fall back to seed
       } finally {
         setLoading(false);
+        loadedRef.current = true;
       }
     }
     load();
@@ -165,20 +175,64 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
   const save = useCallback(async () => {
     setSaving(true);
     setSaved(false);
+    setSaveError(null);
     try {
-      await fetch("/api/ai/settings", {
+      const res = await fetch("/api/ai/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookId, constitution, fingerprint, router }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      // Track what we just saved so the auto-save effect doesn't re-fire.
+      if (data.router) lastSavedRouterRef.current = JSON.stringify(data.router);
       setSaved(true);
+      setSaveError(null);
       setTimeout(() => setSaved(false), 2000);
-    } catch {
-      // silent
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
     }
   }, [bookId, constitution, fingerprint, router]);
+
+  // AUTO-SAVE the router on change (debounced 1.5s).
+  // This prevents the "I picked Gemini for brainstorm, navigated to
+  // Workshop, and my router settings were gone" problem — the user
+  // no longer needs to remember to press Save for router changes.
+  // Only fires AFTER the initial load completes, and only when the
+  // router JSON actually changed from what was last saved.
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    const routerJson = JSON.stringify(router);
+    if (routerJson === lastSavedRouterRef.current) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/ai/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bookId, router }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(data.error ?? `HTTP ${res.status}`);
+        }
+        lastSavedRouterRef.current = routerJson;
+        setSaveError(null);
+        // Brief "saved" flash so the user sees it auto-saved.
+        setSaved(true);
+        setTimeout(() => setSaved(false), 1500);
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : "Router auto-save failed");
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [router, bookId]);
 
   async function retestProviders() {
     setTesting(true);
@@ -306,6 +360,11 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
         ))}
         <div className="ml-auto flex items-center gap-2">
           {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
+          {saveError && (
+            <span className="text-xs text-rose-400" title={saveError}>
+              ⚠ Save failed
+            </span>
+          )}
           <button
             onClick={save}
             disabled={saving}
@@ -465,8 +524,11 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
       {tab === "router" && (
         <div className="space-y-3">
           <div className="rounded-lg border border-border bg-card p-4">
-            <p className="mb-3 text-xs text-[var(--text-3)]">
+            <p className="mb-1 text-xs text-[var(--text-3)]">
               Route each task to a specific model. z.ai GLM is always available (free, no key). Gemini models need an API key — add one in the <button onClick={() => setTab("providers")} className="text-accent hover:underline">Providers tab</button>.
+            </p>
+            <p className="mb-3 text-[11px] text-emerald-400/70">
+              ✓ Router changes auto-save after 1.5s — you can navigate away without pressing Save.
             </p>
             {TASKS.map((task) => (
               <RouterRow
