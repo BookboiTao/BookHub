@@ -1,0 +1,111 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
+import { callAI } from "@/lib/ai/provider-clients";
+import { buildBookContext, type Scope, CONSTITUTION_SEED, FINGERPRINT_SEED } from "@/lib/ai/context-builder";
+import { checkProse } from "@/lib/ai/guard";
+import { z } from "zod";
+
+const proposeSchema = z.object({
+  bookId: z.string(),
+  action: z.enum(["brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities"]),
+  scope: z.object({
+    type: z.enum(["tab", "editor", "card", "overview"]),
+    bookId: z.string(),
+    tab: z.string().optional(),
+    chapterId: z.string().optional(),
+    cardId: z.string().optional(),
+  }),
+  extra: z.string().optional(),
+});
+
+const TASK_PROMPTS: Record<string, string> = {
+  brainstorm_tab: "You are brainstorming new worldbuilding cards for this category. Generate 3-5 candidate cards. Each should have a title, a one-line summary, and a 1-2 sentence body. Format as JSON array: [{\"title\":\"...\",\"summary\":\"...\",\"body\":\"...\",\"tags\":[\"...\"]}]. Be creative but consistent with the existing world. Return ONLY the JSON array, no commentary.",
+  continue_chapter: "Continue writing the next paragraph(s) of this chapter. Match the voice and style exactly. Write 2-4 paragraphs. Do not write chapter titles or meta-commentary — just the prose.",
+  expand_card: "Expand this card with richer detail. Provide a revised summary (1 line) and an expanded body (3-5 sentences). Format as JSON: {\"title\":\"...\",\"summary\":\"...\",\"body\":\"...\"}. Return ONLY the JSON.",
+  generate_summary: "Write a ~150 word world summary for this book based on the cards and content you can see. It should read as a pitch — what makes this world unique, what the central tensions are. Return only the summary text.",
+  contradiction_check: "Check the world content for contradictions, inconsistencies, or canon violations. Return findings as JSON array: [{\"quote\":\"...\",\"issue\":\"...\",\"severity\":\"error\"|\"warning\",\"suggestion\":\"...\"}]. If no issues found, return empty array []. Be proportional — don't flag defensible plain statements. Return ONLY the JSON.",
+  extract_entities: "Scan the workshop notes and conversation for structured worldbuilding entities that could become World Bible cards. Extract people (characters), places (geography), organizations (factions), magical systems, historical events, and creatures. Also detect relationships between the entities you extract. Return as JSON object: {\"entities\":[{\"title\":\"...\",\"summary\":\"...\",\"body\":\"...\",\"category\":\"magic|cosmology|geography|factions|history|bestiary|character\",\"tags\":[\"...\"]}],\"links\":[{\"from\":\"Entity Title A\",\"to\":\"Entity Title B\",\"label\":\"relationship type\"}]}. Only include entities with enough detail to warrant a card. Links reference entities by their title. Return ONLY the JSON object.",
+};
+
+export async function POST(req: NextRequest) {
+  const userOr401 = await requireUser();
+  if (userOr401 instanceof Response) return userOr401;
+
+  const body = await req.json().catch(() => null);
+  const parsed = proposeSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const { bookId, action, scope: rawScope, extra } = parsed.data;
+
+  const scope: Scope = {
+    type: rawScope.type,
+    bookId,
+    ...(rawScope.tab ? { tab: rawScope.tab } : {}),
+    ...(rawScope.chapterId ? { chapterId: rawScope.chapterId } : {}),
+    ...(rawScope.cardId ? { cardId: rawScope.cardId } : {}),
+  } as Scope;
+
+  // Build context
+  const ctx = await buildBookContext(scope);
+
+  // Build the task prompt
+  const taskPrompt = TASK_PROMPTS[action] ?? "";
+  const userMessage = extra 
+    ? `${taskPrompt}\n\nAdditional instruction from the writer: ${extra}`
+    : taskPrompt;
+
+  // Call the AI
+  const response = await callAI({
+    system: ctx.system,
+    messages: [
+      { role: "user", content: userMessage },
+    ],
+    temperature: action === "continue_chapter" ? 0.8 : 0.6,
+    maxTokens: action === "brainstorm_tab" ? 2000 : 1500,
+  });
+
+  // Run guard on prose output (skip for structured JSON outputs)
+  const guardViolations = action === "continue_chapter" 
+    ? checkProse(response.text)
+    : [];
+
+  // Parse structured responses
+  let structured: unknown = undefined;
+  if (action === "brainstorm_tab" || action === "contradiction_check" || action === "expand_card" || action === "extract_entities") {
+    try {
+      // Extract JSON from the response (handles ```json blocks too)
+      const jsonMatch = response.text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+      if (jsonMatch) {
+        structured = JSON.parse(jsonMatch[0]);
+      }
+    } catch {
+      structured = undefined;
+    }
+  }
+
+  // Log usage
+  const supabase = await createSupabaseServer();
+  const user = userOr401;
+  await supabase.from("ai_usage").insert({
+    book_id: bookId,
+    user_id: user.id,
+    provider: response.provider,
+    model: response.model,
+    task: action,
+    tokens: response.usage?.totalTokens ?? 0,
+  }).then(() => {});
+
+  return NextResponse.json({
+    text: response.text,
+    structured,
+    meta: {
+      provider: response.provider,
+      model: response.model,
+      usage: response.usage,
+      contextLayers: ctx.contextLayers,
+    },
+    guard: guardViolations.length > 0 ? guardViolations : undefined,
+  });
+}
