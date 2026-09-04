@@ -31,9 +31,6 @@ export const MODEL_CATALOG: Record<ProviderKey, ProviderDef> = {
     models: [
       { id: "glm-4.5-flash", label: "GLM-4.5-Flash (free)" },
       { id: "glm-4.7-flash", label: "GLM-4.7-Flash (free, newer)" },
-      { id: "glm-4.5-air", label: "GLM-4.5-Air (cheap, paid)" },
-      { id: "glm-4.5", label: "GLM-4.5 (balanced, paid)" },
-      { id: "glm-4.6", label: "GLM-4.6 (highest quality, paid)" },
     ],
   },
   gemini: {
@@ -65,7 +62,7 @@ export const ALL_MODELS: { provider: ProviderKey; model: ModelDef }[] = ALL_PROV
  */
 export const PROVIDER_NOTES: Record<ProviderKey, string> = {
   zai:
-    "Requires a Z.ai API key (free to create). Sign up at https://z.ai/model-api, then create a key at https://z.ai/manage-apikey/apikey-list and paste it below. GLM-4.5-Flash and GLM-4.7-Flash are free to use; GLM-4.5-Air, GLM-4.5, and GLM-4.6 are paid per-token.",
+    "Requires a Z.ai API key (free to create). Sign up at https://z.ai/model-api, then create a key at https://z.ai/manage-apikey/apikey-list and paste it below. Both models listed here (GLM-4.5-Flash and GLM-4.7-Flash) are free to use.",
   gemini:
     "Requires a Google AI Studio API key. Get one free at https://aistudio.google.com/apikey — paste it in the field below. The free tier is generous (15 RPM, 1500/day on Flash).",
 };
