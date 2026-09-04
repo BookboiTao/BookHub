@@ -62,8 +62,8 @@ const ERROR_META: Record<string, { title: string; hint: string; cta?: string; ct
     hint: "Couldn't reach the provider. Check your connection and try again.",
   },
   sdk_init_failed: {
-    title: "z.ai unavailable in this environment",
-    hint: "The built-in z.ai provider couldn't read its config file. If you have a Gemini API key saved, switch this task to a Gemini model in the Router tab — Gemini will work without z.ai.",
+    title: "Provider unavailable",
+    hint: "The provider client failed to initialize. Try again, or switch this task to a different model in the Router tab.",
     cta: "Open Router tab",
     ctaHash: "#/b/__BOOK__/ai",
   },
@@ -76,7 +76,7 @@ const ERROR_META: Record<string, { title: string; hint: string; cta?: string; ct
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
-  zai: "z.ai GLM",
+  zai: "Z.ai GLM",
   gemini: "Google Gemini",
 };
 

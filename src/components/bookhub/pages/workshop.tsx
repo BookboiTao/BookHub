@@ -76,11 +76,14 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (book?.workshopNotes !== undefined) {
-      setNotes(book.workshopNotes ?? "");
-    }
-  }, [book?.workshopNotes]);
+  // Hydrate notes from the loaded book exactly once (adjust-state-during-render
+  // pattern instead of a setState-in-effect — avoids clobbering local edits
+  // on refetch).
+  const [notesHydrated, setNotesHydrated] = useState(false);
+  if (!notesHydrated && book?.workshopNotes !== undefined) {
+    setNotesHydrated(true);
+    setNotes(book.workshopNotes ?? "");
+  }
 
   const saveNotes = useCallback((text: string) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);

@@ -1,11 +1,11 @@
 /* ------------------------------------------------------------------ *
  * provider-clients.ts — AI provider CLIENT implementations.
  *
- * SERVER-ONLY. Imports z-ai-web-dev-sdk, which must never reach a
- * client component. The pure data (MODEL_CATALOG, PROVIDER_NOTES,
- * type defs, classifier) lives in ./provider-catalog.ts which is
- * client-safe. Both server modules and client components import the
- * catalog from there.
+ * SERVER-ONLY — only ever called from route handlers (uses real API
+ * keys). The pure data (MODEL_CATALOG, PROVIDER_NOTES, type defs,
+ * classifier) lives in ./provider-catalog.ts which is client-safe.
+ * Both server modules and client components import the catalog from
+ * there.
  *
  * To add more providers later (OpenRouter, Anthropic, OpenAI...):
  *   1. Add an entry to MODEL_CATALOG in ./provider-catalog.ts.
@@ -13,7 +13,6 @@
  *   3. Add it to the switch in callAI().
  * ------------------------------------------------------------------ */
 
-import ZAI from "z-ai-web-dev-sdk";
 // Re-export everything from the client-safe catalog so existing imports
 // from "@/lib/ai/provider-clients" keep working in server code.
 export {
@@ -54,32 +53,52 @@ export type AIResponse = {
 };
 
 /* ------------------------------------------------------------------ *
- * z.ai — primary provider, no key needed
- *
- * The z-ai-web-dev-sdk reads /etc/.z-ai-config (provisioned automatically
- * by the sandbox) which contains { baseUrl, apiKey }. We never see the
- * key — the SDK uses it internally.
+ * Z.ai GLM — real public API, OpenAI-compatible chat completions.
+ * Needs a free API key from https://z.ai/model-api (Sign up → API Keys).
+ * glm-4.5-flash is free (rate-limited); other GLM models are paid.
  * ------------------------------------------------------------------ */
 export async function callZai(
   shape: CallShape,
   model: string = MODEL_CATALOG.zai.default,
+  apiKey: string = "",
 ): Promise<AIResponse> {
-  const zai = await ZAI.create();
+  if (!apiKey) {
+    throw new Error("Z.ai API key is missing. Add it in AI Studio → Providers.");
+  }
 
   const messages = [
     ...(shape.system ? [{ role: "system" as const, content: shape.system }] : []),
     ...shape.messages,
   ];
 
-  const response = await zai.chat.completions.create({
-    model,
-    messages,
-    temperature: shape.temperature ?? 0.7,
-    max_tokens: shape.maxTokens ?? 2000,
+  const res = await fetch("https://api.z.ai/api/paas/v4/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: shape.temperature ?? 0.7,
+      max_tokens: shape.maxTokens ?? 2000,
+    }),
   });
 
-  const text = response.choices[0]?.message?.content ?? "";
-  const usage = response.usage;
+  if (!res.ok) {
+    let errMsg = `Z.ai HTTP ${res.status}`;
+    try {
+      const errJson = await res.json();
+      errMsg = errJson?.error?.message ?? errJson?.message ?? errMsg;
+    } catch {
+      // ignore JSON parse failure
+    }
+    throw new Error(`Z.ai error: ${errMsg}`);
+  }
+
+  const response = await res.json();
+  const text = response?.choices?.[0]?.message?.content ?? "";
+  const usage = response?.usage;
 
   return {
     text,
@@ -175,7 +194,7 @@ export async function callAI(
   const model = options?.model ?? MODEL_CATALOG[provider].default;
 
   if (provider === "zai") {
-    return callZai(shape, model);
+    return callZai(shape, model, options?.apiKeys?.zai ?? "");
   }
   if (provider === "gemini") {
     return callGemini(shape, model, options?.apiKeys?.gemini ?? "");

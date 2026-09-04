@@ -48,10 +48,10 @@ export const useUI = create<UIState>((set) => ({
       try {
         localStorage.setItem(
           STORAGE_KEY,
-          JSON.stringify({ sidebarCollapsed, expandedSections: s.expandedSections }),
+          JSON.stringify({ sidebarCollapsed: collapsed, expandedSections: s.expandedSections }),
         );
       } catch {}
-      return { sidebarCollapsed };
+      return { sidebarCollapsed: collapsed };
     }),
 
   toggleSection: (id) =>

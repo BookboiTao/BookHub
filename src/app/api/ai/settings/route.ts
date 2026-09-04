@@ -21,7 +21,7 @@ const patchSettingsSchema = z.object({
       text: z.string(),
     })),
   }).optional(),
-  router: z.record(z.string()).optional(),
+  router: z.record(z.string(), z.string()).optional(),
 });
 
 export async function GET(req: NextRequest) {

@@ -1561,7 +1561,7 @@ function WorldBibleCanvas({ bookId, tab, focusCardId, aiDock }: CanvasPageProps)
           <Plus className="h-4 w-4" />
         </button>
         <button
-          onClick={() => aiDock.openWith(`${CATEGORY_LABEL[tab] ?? tab} · ${cards.length} card${cards.length !== 1 ? "s" : ""}`, { bookId, tab })}
+          onClick={() => aiDock?.openWith(`${CATEGORY_LABEL[tab] ?? tab} · ${cards.length} card${cards.length !== 1 ? "s" : ""}`, { bookId, tab })}
           className="ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-foreground"
           aria-label="AI"
           title="AI"
@@ -1862,7 +1862,7 @@ function CosmologyView({ bookId, tab, focusCardId, aiDock }: CanvasPageProps) {
           if (!c) return n;
           return {
             ...n,
-            position: flowPositions?.get(c.id) ?? { x: c.x, y: c.y },
+            position: { x: c.x, y: c.y },
             data: { card: c, onSelect: onSelectCard, onRequestDelete: handleRequestDelete },
             selected: n.id === selectedId,
           };
@@ -1872,7 +1872,7 @@ function CosmologyView({ bookId, tab, focusCardId, aiDock }: CanvasPageProps) {
         .map<LoreNodeType>((c) => ({
           id: c.id,
           type: "lore",
-          position: flowPositions?.get(c.id) ?? { x: c.x, y: c.y },
+          position: { x: c.x, y: c.y },
           data: { card: c, onSelect: onSelectCard, onRequestDelete: handleRequestDelete },
           selected: c.id === selectedId,
         }));
@@ -2051,14 +2051,14 @@ function CosmologyView({ bookId, tab, focusCardId, aiDock }: CanvasPageProps) {
       ) : (
         /* ----- CANVAS VIEW ----- */
         <div className="flex flex-1 overflow-hidden">
-          <div className="relative flex-1 overflow-hidden" onDoubleClick={viewMode === "canvas" ? handlePaneDoubleClick : undefined}>
+          <div className="relative flex-1 overflow-hidden" onDoubleClick={cosView === "canvas" ? handlePaneDoubleClick : undefined}>
             <ReactFlow<LoreNodeType, EdgeType>
               nodes={nodes}
               edges={edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={handleConnect}
-              onNodeDragStop={viewMode === "canvas" ? handleNodeDragStop : undefined}
+              onNodeDragStop={cosView === "canvas" ? handleNodeDragStop : undefined}
               nodeTypes={nodeTypes}
               onNodeClick={(_e, node) => setSelectedId(node.id)}
               onPaneClick={() => setSelectedId(null)}
@@ -2344,7 +2344,7 @@ function HistoryView({ bookId, tab, focusCardId, aiDock }: CanvasPageProps) {
           if (!c) return n;
           return {
             ...n,
-            position: flowPositions?.get(c.id) ?? { x: c.x, y: c.y },
+            position: { x: c.x, y: c.y },
             data: { card: c, onSelect: onSelectCard, onRequestDelete: handleRequestDelete },
             selected: n.id === selectedId,
           };
@@ -2354,7 +2354,7 @@ function HistoryView({ bookId, tab, focusCardId, aiDock }: CanvasPageProps) {
         .map<LoreNodeType>((c) => ({
           id: c.id,
           type: "lore",
-          position: flowPositions?.get(c.id) ?? { x: c.x, y: c.y },
+          position: { x: c.x, y: c.y },
           data: { card: c, onSelect: onSelectCard, onRequestDelete: handleRequestDelete },
           selected: c.id === selectedId,
         }));
@@ -2500,7 +2500,7 @@ function HistoryView({ bookId, tab, focusCardId, aiDock }: CanvasPageProps) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={handleConnect}
-            onNodeDragStop={viewMode === "canvas" ? handleNodeDragStop : undefined}
+            onNodeDragStop={view === "map" ? handleNodeDragStop : undefined}
             nodeTypes={nodeTypes}
             onNodeClick={(_e, node) => setSelectedId(node.id)}
             onPaneClick={() => setSelectedId(null)}

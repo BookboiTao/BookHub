@@ -114,9 +114,12 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showSaveErrorPanel, setShowSaveErrorPanel] = useState(false);
   // Auto-open the error panel whenever a NEW error arrives.
-  useEffect(() => {
+  // (adjust-state-during-render pattern instead of a setState-in-effect)
+  const [lastSeenError, setLastSeenError] = useState<string | null>(null);
+  if (saveError !== lastSeenError) {
+    setLastSeenError(saveError);
     if (saveError) setShowSaveErrorPanel(true);
-  }, [saveError]);
+  }
   // Track whether the initial load from the server has completed —
   // prevents the router auto-save from firing with empty data on mount.
   const loadedRef = useRef(false);

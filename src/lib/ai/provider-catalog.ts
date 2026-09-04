@@ -23,15 +23,16 @@ export type ProviderDef = {
 
 export const MODEL_CATALOG: Record<ProviderKey, ProviderDef> = {
   zai: {
-    default: "glm-4-flash",
-    label: "z.ai GLM",
-    requiresApiKey: false,
+    default: "glm-4.5-flash",
+    label: "Z.ai GLM",
+    requiresApiKey: true,
+    helpUrl: "https://z.ai/model-api",
+    keyHint: "your Z.ai API key",
     models: [
-      { id: "glm-4-flash", label: "GLM-4-Flash (fast, free)" },
-      { id: "glm-4.5", label: "GLM-4.5 (latest, balanced)" },
+      { id: "glm-4.5-flash", label: "GLM-4.5-Flash (free tier, rate-limited)" },
+      { id: "glm-4.5-air", label: "GLM-4.5-Air (lighter, cheap)" },
+      { id: "glm-4.5", label: "GLM-4.5 (balanced)" },
       { id: "glm-4.6", label: "GLM-4.6 (newest, highest quality)" },
-      { id: "glm-4-plus", label: "GLM-4-Plus (legacy, high quality)" },
-      { id: "glm-4-air", label: "GLM-4-Air (lightweight, cheap)" },
     ],
   },
   gemini: {
@@ -63,7 +64,7 @@ export const ALL_MODELS: { provider: ProviderKey; model: ModelDef }[] = ALL_PROV
  */
 export const PROVIDER_NOTES: Record<ProviderKey, string> = {
   zai:
-    "Built into this workspace. The z-ai-web-dev-sdk reads /etc/.z-ai-config (provisioned automatically) and authenticates against https://internal-api.z.ai/v1 with a pre-paid key. You don't need to do anything — just pick a model.",
+    "Requires a Z.ai API key. Sign up free at https://z.ai/model-api, create a key, and paste it below. glm-4.5-flash is free (rate-limited); the other GLM models are paid per-token.",
   gemini:
     "Requires a Google AI Studio API key. Get one free at https://aistudio.google.com/apikey — paste it in the field below. The free tier is generous (15 RPM, 1500/day on Flash).",
 };
@@ -128,8 +129,8 @@ export const ERROR_HINTS: Record<AiErrorKind, { title: string; hint: string; cta
     cta: null,
   },
   sdk_init_failed: {
-    title: "z.ai unavailable in this environment",
-    hint: "The built-in z.ai provider couldn't read its config file. If you have a Gemini API key saved, switch this task to a Gemini model in the Router tab — Gemini will work without z.ai.",
+    title: "Provider unavailable",
+    hint: "The provider client failed to initialize. Try again, or switch this task to a different model in the Router tab.",
     cta: "Open Router tab",
   },
   unknown: {
@@ -150,12 +151,6 @@ export function classifyAiError(error: unknown): {
   const msg = error instanceof Error ? error.message : String(error);
   const lower = msg.toLowerCase();
 
-  // z-ai SDK init failure — the SDK couldn't read /etc/.z-ai-config.
-  // This is distinct from a bad_key (which is the API rejecting a key).
-  // Surface it specifically so the user knows to switch to Gemini.
-  if (lower.includes("configuration file not found") || lower.includes(".z-ai-config")) {
-    return { kind: "sdk_init_failed", message: msg, provider: "zai" };
-  }
   if (lower.includes("api key not valid") || lower.includes("api_key_invalid") || lower.includes("unauthorized")) {
     return { kind: "bad_key", message: msg };
   }

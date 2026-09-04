@@ -50,7 +50,7 @@ export async function GET() {
 }
 
 const patchSchema = z.object({
-  provider: z.enum(["gemini"]),
+  provider: z.enum(ALL_PROVIDER_KEYS as [ProviderKey, ...ProviderKey[]]),
   apiKey: z.string().min(8).max(500),
   label: z.string().optional(),
 });

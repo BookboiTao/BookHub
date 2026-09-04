@@ -40,6 +40,7 @@ export type Chapter = {
   summary?: string;
   content?: string;
   volumeId?: string | null;
+  sortOrder?: number;
 };
 
 export type LoreCard = {

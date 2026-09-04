@@ -82,9 +82,8 @@ export async function POST(req: NextRequest) {
   const router = (settings.router ?? {}) as Record<string, string>;
   const routerModel = router[action];
 
-  // Always load the user's API keys — needed for the fallback path
-  // (if z.ai fails with sdk_init_failed and the user has a Gemini key,
-  // we retry the call with Gemini).
+  // Load the user's saved API keys — needed for whichever provider the
+  // router (or explicit request) selects.
   const apiKeys = await loadUserApiKeys(user.id);
 
   // If the router points to a provider that needs a key, validate it's present.

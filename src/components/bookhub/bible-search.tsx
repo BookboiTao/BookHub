@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, X, ArrowUpRight } from "lucide-react";
 import type { LoreCard } from "@/lib/data-client";
-import type { BibleTab } from "../router";
+import type { BibleTab } from "./router";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ *

@@ -65,7 +65,7 @@ export function checkProse(text: string): Violation[] {
     violations.push({
       rule: "No vagueness (Rule 3)",
       severity: "warning",
-      quote: shiftedMatches[0],
+      quote: shiftedMatches[0] ?? "",
       suggestion: "If something changes, name what specifically changed.",
     });
   }
@@ -89,7 +89,7 @@ export function checkProse(text: string): Violation[] {
     violations.push({
       rule: "No reflexive triads (Rule 5)",
       severity: "warning",
-      quote: triadMatches[0],
+      quote: triadMatches[0] ?? "",
       suggestion: "The ', the X, the Y' pattern stacks description. Consider varying structure.",
     });
   }
