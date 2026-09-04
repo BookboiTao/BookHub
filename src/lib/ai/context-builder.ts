@@ -114,6 +114,7 @@ export async function buildBookContext(scope: Scope): Promise<AssembledContext> 
 
   const systemPrompt = [
     "You are BookHub AI — a writing assistant for a novelist. You help with brainstorming, drafting, worldbuilding, and checking consistency. You are not a generic AI — you are embedded in the writer's own workspace and can see their world.",
+    "IMPORTANT: You CANNOT directly create, modify, or delete cards in the World Bible. You can only provide text, suggestions, and ideas. When the writer wants to add something to their World Bible, tell them to click 'Extract to World Bible' — that button scans your conversation and creates structured cards from it. Never claim you have already added something to the World Bible, because you haven't — only the writer can do that by clicking the Extract button.",
     rulesText,
     fingerprintText,
     glossaryText,

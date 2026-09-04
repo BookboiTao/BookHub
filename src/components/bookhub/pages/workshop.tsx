@@ -11,21 +11,19 @@ import {
   X,
   Check,
   AlertTriangle,
+  Upload,
+  Paperclip,
 } from "lucide-react";
 import { useBook, useUpdateBook, LoadingSpinner } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
-import type { BibleTab } from "../router";
 
 /* ------------------------------------------------------------------ *
  * WorkShop — the incubator.
  *
  * Three panels:
- *   LEFT: unstructured notes (textarea, persisted to books.workshop_notes)
+ *   LEFT: unstructured notes (textarea + file upload, persisted to books.workshop_notes)
  *   RIGHT: AI chat with context = notes + existing World Bible
  *   BOTTOM: extracted entity candidates → dispatch to Bible tabs
- *
- * The AI sees your messy notes AND your structured world.
- * It helps you brainstorm, then extracts structured cards you can send.
  * ------------------------------------------------------------------ */
 
 type ChatMessage = {
@@ -42,8 +40,8 @@ type ExtractedEntity = {
 };
 
 type ExtractedLink = {
-  from: string; // entity title
-  to: string;   // entity title
+  from: string;
+  to: string;
   label: string;
 };
 
@@ -69,19 +67,20 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
   const [extracting, setExtracting] = useState(false);
   const [entities, setEntities] = useState<ExtractedEntity[] | null>(null);
   const [extractedLinks, setExtractedLinks] = useState<ExtractedLink[]>([]);
-  const [createdCardIds, setCreatedCardIds] = useState<Record<string, string>>({}); // title → cardId
+  const [createdCardIds, setCreatedCardIds] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load notes from book data
   useEffect(() => {
     if (book?.workshopNotes !== undefined) {
       setNotes(book.workshopNotes ?? "");
     }
   }, [book?.workshopNotes]);
 
-  // Debounced save of notes
   const saveNotes = useCallback((text: string) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
@@ -96,13 +95,75 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
     saveNotes(text);
   }
 
-  // Auto-scroll chat
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, loading]);
 
+  /* ----- File upload ----- */
+  async function handleFiles(files: FileList | File[]) {
+    const fileArray = Array.from(files);
+    setUploading(true);
+    setError(null);
+
+    try {
+      for (const file of fileArray) {
+        const ext = file.name.split(".").pop()?.toLowerCase();
+        let text = "";
+
+        if (ext === "txt" || ext === "md" || ext === "csv" || ext === "json") {
+          // Read as text directly
+          text = await file.text();
+        } else if (ext === "docx") {
+          // Extract text from .docx using mammoth
+          const arrayBuffer = await file.arrayBuffer();
+          const mammoth = await import("mammoth/mammoth.browser");
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          text = result.value;
+        } else if (ext === "pdf") {
+          // For PDF, read as text — works for some PDFs, otherwise show message
+          text = await file.text();
+          if (text.includes("%PDF")) {
+            setError("PDF text extraction is limited. For best results, copy-paste the text from your PDF into the notes.");
+            continue;
+          }
+        } else {
+          // Try reading as text
+          text = await file.text();
+        }
+
+        if (text.trim()) {
+          const header = `\n\n--- ${file.name} ---\n`;
+          handleNotesChange(notes + header + text.trim() + "\n---\n");
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to read file");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) {
+      handleFiles(e.dataTransfer.files);
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+  }
+
+  /* ----- AI chat ----- */
   async function handleSend() {
     const text = input.trim();
     if (!text || loading) return;
@@ -150,6 +211,7 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
     }
   }
 
+  /* ----- Extract entities ----- */
   async function handleExtract() {
     setExtracting(true);
     setError(null);
@@ -174,7 +236,6 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
 
       const data = await res.json();
       const structured = data.structured;
-      // Handle both old array format and new {entities, links} format
       if (Array.isArray(structured)) {
         setEntities(structured);
         setExtractedLinks([]);
@@ -212,34 +273,25 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
         const data = await res.json();
         const cardId = data.card?.id;
         if (cardId) {
-          // Track the created card ID (by title) for link creation
           setCreatedCardIds((prev) => ({ ...prev, [entity.title]: cardId }));
-          // Try to create links now (in case both endpoints are already created)
           tryCreateLinks();
         }
       }
-      // Remove from list
       setEntities((prev) => prev?.filter((_, i) => i !== index) ?? null);
     } catch {
       setError("Failed to create card");
     }
   }
 
-  // Create links between cards that have both been dispatched
   function tryCreateLinks() {
     for (const link of extractedLinks) {
       const fromId = createdCardIds[link.from];
       const toId = createdCardIds[link.to];
       if (fromId && toId) {
-        // Create the link (fire-and-forget — don't block UI)
         fetch(`/api/books/${bookId}/links`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fromCardId: fromId,
-            toCardId: toId,
-            label: link.label,
-          }),
+          body: JSON.stringify({ fromCardId: fromId, toCardId: toId, label: link.label }),
         }).catch(() => {});
       }
     }
@@ -269,7 +321,7 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
               </>
             ) : (
               <>
-                <Sparkles className="h-3 w-3 text-accent" /> Extract entities
+                <Sparkles className="h-3 w-3 text-accent" /> Extract to World Bible
               </>
             )}
           </button>
@@ -278,29 +330,70 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
 
       {/* main split: left notes + right chat */}
       <div className="flex flex-1 overflow-hidden">
-        {/* LEFT: unstructured notes */}
-        <div className="flex w-[40%] min-w-[300px] flex-col border-r border-border">
-          <div className="shrink-0 border-b border-border px-4 py-2">
+        {/* LEFT: unstructured notes + file upload */}
+        <div
+          className="flex w-[40%] min-w-[300px] flex-col border-r border-border"
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+        >
+          <div className="shrink-0 flex items-center justify-between border-b border-border px-4 py-2">
             <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-3)]">
               Raw ideas
             </span>
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".txt,.md,.csv,.json,.docx,.pdf"
+                onChange={(e) => {
+                  if (e.target.files) handleFiles(e.target.files);
+                  e.target.value = "";
+                }}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="flex items-center gap-1 text-[10px] text-[var(--text-3)] hover:text-foreground disabled:opacity-40"
+                title="Upload .txt, .md, .docx, .pdf files"
+              >
+                {uploading ? (
+                  <><Loader2 className="h-3 w-3 animate-spin" /> Reading…</>
+                ) : (
+                  <><Upload className="h-3 w-3" /> Upload</>
+                )}
+              </button>
+            </div>
           </div>
           <textarea
             value={notes}
             onChange={(e) => handleNotesChange(e.target.value)}
             placeholder="Paste raw text, type scattered thoughts, drop outlines…
 
+Or drag a .txt, .md, .docx file here — its content will be added to these notes.
+
 This space is meant to be messy. The AI reads this alongside your World Bible and helps you structure it."
-            className="bh-scroll flex-1 resize-none border-0 bg-background p-4 font-mono text-[13px] leading-relaxed text-foreground/90 placeholder:text-[var(--text-3)] focus:outline-none"
+            className={cn(
+              "bh-scroll flex-1 resize-none border-0 bg-background p-4 font-mono text-[13px] leading-relaxed text-foreground/90 placeholder:text-[var(--text-3)] focus:outline-none transition-colors",
+              dragOver && "bg-accent/5",
+            )}
             style={{ minHeight: "150px" }}
           />
+          {/* drag overlay hint */}
+          {dragOver && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-accent/10">
+              <div className="flex flex-col items-center gap-2 text-accent">
+                <Upload className="h-8 w-8" />
+                <span className="text-sm font-medium">Drop files here</span>
+              </div>
+            </div>
+          )}
           {/* Send to AI button */}
           <div className="shrink-0 border-t border-border p-2">
             <button
-              onClick={() => {
-                if (!notes.trim()) return;
-                handleSendNotesToAI();
-              }}
+              onClick={handleSendNotesToAI}
               disabled={!notes.trim() || loading}
               className="flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-medium text-accent-foreground hover:bg-accent/90 disabled:opacity-40"
             >
@@ -329,8 +422,10 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
                 <p className="text-sm font-medium text-foreground">WorkShop AI</p>
                 <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-2)]">
                   Talk through your ideas. The AI sees your raw notes (left) and your
-                  existing World Bible. When you're ready, click "Extract entities" to
-                  turn your brainstorm into structured cards.
+                  existing World Bible.
+                </p>
+                <p className="mt-1 text-[10px] text-[var(--text-3)]">
+                  When ready, click "Extract to World Bible" to create structured cards.
                 </p>
               </div>
             )}
@@ -356,6 +451,22 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
                   <div className="whitespace-pre-wrap leading-relaxed text-foreground/90">
                     {msg.content}
                   </div>
+                  {/* Extract button on AI messages */}
+                  {msg.role === "assistant" && !extracting && (
+                    <div className="mt-2 flex items-center gap-2 border-t border-border/50 pt-2">
+                      <button
+                        onClick={handleExtract}
+                        disabled={!notes.trim() && messages.length === 0}
+                        className="flex items-center gap-1 rounded-md border border-accent/30 bg-accent/5 px-2.5 py-1 text-[10px] font-medium text-accent hover:bg-accent/10 disabled:opacity-40"
+                      >
+                        <Sparkles className="h-2.5 w-2.5" />
+                        Extract to World Bible
+                      </button>
+                      <span className="text-[9px] text-[var(--text-3)]">
+                        Scans notes + chat → creates draft cards
+                      </span>
+                    </div>
+                  )}
                 </div>
               ))}
 
@@ -411,7 +522,7 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
               Extracted entities ({entities.length})
             </span>
             <button
-              onClick={() => setEntities(null)}
+              onClick={() => { setEntities(null); setExtractedLinks([]); }}
               className="text-[var(--text-3)] hover:text-foreground"
             >
               <X className="h-3.5 w-3.5" />
@@ -449,7 +560,6 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
                     </button>
                   </div>
                 ))}
-                {/* Detected relationships */}
                 {extractedLinks.length > 0 && entities.length === 0 && (
                   <div className="col-span-full mt-2 rounded-lg border border-accent/20 bg-accent/5 p-3">
                     <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-accent">
