@@ -69,7 +69,10 @@ export async function POST(req: NextRequest) {
   } as Scope;
 
   // Build context
-  const ctx = await buildBookContext(scope);
+  // Build context. Structured (JSON-only) actions skip the "you can't
+  // create cards" chat reminder — see buildBookContext's doc comment.
+  const structuredActions = new Set(["brainstorm_tab", "contradiction_check", "expand_card", "extract_entities"]);
+  const ctx = await buildBookContext(scope, { structuredOutput: structuredActions.has(action) });
 
   // Build the task prompt
   const taskPrompt = TASK_PROMPTS[action] ?? "";
@@ -131,10 +134,18 @@ export async function POST(req: NextRequest) {
 
   // Parse structured responses
   let structured: unknown = undefined;
-  if (action === "brainstorm_tab" || action === "contradiction_check" || action === "expand_card" || action === "extract_entities") {
+  const OBJECT_ACTIONS = new Set(["expand_card", "extract_entities"]); // model returns {...}
+  const ARRAY_ACTIONS = new Set(["brainstorm_tab", "contradiction_check"]); // model returns [...]
+  if (OBJECT_ACTIONS.has(action) || ARRAY_ACTIONS.has(action)) {
     try {
-      // Extract JSON from the response (handles ```json blocks too)
-      const jsonMatch = response.text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+      // Extract JSON from the response (handles ```json fences and any
+      // leading/trailing commentary the model adds). Match the bracket type
+      // the action actually returns instead of a generic [...]|{...} guess —
+      // extract_entities/expand_card return an object, whose own "[...]"
+      // array fields would otherwise win a generic match if the model
+      // prefixes its reply with any stray "[" before the real JSON.
+      const pattern = OBJECT_ACTIONS.has(action) ? /\{[\s\S]*\}/ : /\[[\s\S]*\]/;
+      const jsonMatch = response.text.match(pattern);
       if (jsonMatch) {
         structured = JSON.parse(jsonMatch[0]);
       }

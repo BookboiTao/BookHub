@@ -81,8 +81,17 @@ export async function getAISettings(bookId: string) {
 /**
  * Build the complete context for an AI call.
  * This is the ONLY entry point — no AI call may bypass it.
+ *
+ * `structuredOutput` should be true for any call whose entire job is to
+ * return machine-parsed JSON (extract_entities, brainstorm_tab, expand_card,
+ * contradiction_check). Those calls are the mechanism BEHIND the "Extract to
+ * World Bible" button etc. — telling the model "you cannot create cards,
+ * tell the writer to click Extract" inside the very call that button
+ * triggers is a self-contradiction that reliably derails the model off the
+ * requested JSON format. That reminder only belongs in conversational chat,
+ * where the model might otherwise falsely claim it already added something.
  */
-export async function buildBookContext(scope: Scope): Promise<AssembledContext> {
+export async function buildBookContext(scope: Scope, opts?: { structuredOutput?: boolean }): Promise<AssembledContext> {
   const supabase = await createSupabaseServer();
   const layers: string[] = [];
   let totalChars = 0;
@@ -114,7 +123,9 @@ export async function buildBookContext(scope: Scope): Promise<AssembledContext> 
 
   const systemPrompt = [
     "You are BookHub AI — a writing assistant for a novelist. You help with brainstorming, drafting, worldbuilding, and checking consistency. You are not a generic AI — you are embedded in the writer's own workspace and can see their world.",
-    "IMPORTANT: You CANNOT directly create, modify, or delete cards in the World Bible. You can only provide text, suggestions, and ideas. When the writer wants to add something to their World Bible, tell them to click 'Extract to World Bible' — that button scans your conversation and creates structured cards from it. Never claim you have already added something to the World Bible, because you haven't — only the writer can do that by clicking the Extract button.",
+    opts?.structuredOutput
+      ? undefined
+      : "IMPORTANT: You CANNOT directly create, modify, or delete cards in the World Bible. You can only provide text, suggestions, and ideas. When the writer wants to add something to their World Bible, tell them to click 'Extract to World Bible' — that button scans your conversation and creates structured cards from it. Never claim you have already added something to the World Bible, because you haven't — only the writer can do that by clicking the Extract button.",
     rulesText,
     fingerprintText,
     glossaryText,
