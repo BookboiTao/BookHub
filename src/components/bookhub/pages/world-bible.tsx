@@ -165,7 +165,7 @@ function LoreNode({ data, selected }: NodeProps<LoreNodeType>) {
         onSelect(card.id);
       }}
       className={cn(
-        "group relative w-[240px] cursor-pointer rounded-lg border bg-card p-4 transition-colors",
+        "group relative w-[176px] cursor-pointer rounded-lg border bg-card p-3 transition-colors",
         selected ? "border-accent" : "border-border hover:bg-[var(--surface-2)]",
         deprecated && "opacity-60",
       )}
@@ -227,23 +227,23 @@ function LoreNode({ data, selected }: NodeProps<LoreNodeType>) {
 
       <h3
         className={cn(
-          "pr-16 text-sm font-semibold text-foreground",
+          "pr-10 text-[13px] font-semibold leading-tight text-foreground",
           deprecated && "line-through",
         )}
       >
         {card.title}
       </h3>
       {card.summary && (
-        <p className="mt-1 line-clamp-2 text-xs text-[var(--text-2)]">
+        <p className="mt-1 line-clamp-2 text-[11px] text-[var(--text-2)]">
           {card.summary}
         </p>
       )}
       {card.tags.length > 0 && (
-        <div className="mt-2.5 flex flex-wrap gap-1">
-          {card.tags.slice(0, 3).map((t) => (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {card.tags.slice(0, 2).map((t) => (
             <span
               key={t}
-              className="rounded border border-border px-1.5 py-0.5 text-[10px] text-[var(--text-3)]"
+              className="rounded border border-border px-1.5 py-0.5 text-[9px] text-[var(--text-3)]"
             >
               {t}
             </span>
@@ -1415,7 +1415,7 @@ function WorldBibleCanvas({ bookId, tab, focusCardId, aiDock }: CanvasPageProps)
     }
     const roots = cards.filter((c) => (incoming.get(c.id) ?? 0) === 0);
     const positions = new Map<string, { x: number; y: number }>();
-    const colWidth = 280, rowHeight = 200, startX = 40, startY = 40;
+    const colWidth = 200, rowHeight = 150, startX = 40, startY = 40;
     const visited = new Set<string>();
     const queue: { id: string; row: number }[] = roots.map((r) => ({ id: r.id, row: 0 }));
     if (queue.length === 0 && cards.length > 0) queue.push({ id: cards[0].id, row: 0 });
@@ -1462,9 +1462,9 @@ function WorldBibleCanvas({ bookId, tab, focusCardId, aiDock }: CanvasPageProps)
     setIsTidying(true);
     setCards((prev) =>
       prev.map((c, i) => {
-        const col = i % 3;
-        const row = Math.floor(i / 3);
-        return { ...c, x: 40 + col * 300, y: 40 + row * 220 };
+        const col = i % 4;
+        const row = Math.floor(i / 4);
+        return { ...c, x: 40 + col * 200, y: 40 + row * 150 };
       }),
     );
     window.setTimeout(() => setIsTidying(false), 320);
@@ -1955,9 +1955,9 @@ function CosmologyView({ bookId, tab, focusCardId, aiDock }: CanvasPageProps) {
       prev.map((c, i) => {
         if (c.tags.includes("universal-law")) return c; // don't move laws
         const nonLawIdx = prev.filter((x) => !x.tags.includes("universal-law")).indexOf(c);
-        const col = nonLawIdx % 3;
-        const row = Math.floor(nonLawIdx / 3);
-        return { ...c, x: 40 + col * 300, y: 40 + row * 220 };
+        const col = nonLawIdx % 4;
+        const row = Math.floor(nonLawIdx / 4);
+        return { ...c, x: 40 + col * 200, y: 40 + row * 150 };
       }),
     );
     window.setTimeout(() => setIsTidying(false), 320);
