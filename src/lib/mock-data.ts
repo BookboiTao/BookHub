@@ -46,6 +46,7 @@ export type Chapter = {
 export type LoreCard = {
   id: string;
   bookId: string;
+  zoneId?: string;
   category: "magic" | "cosmology" | "geography" | "factions" | "history" | "bestiary" | "character";
   title: string;
   summary: string;
@@ -54,10 +55,14 @@ export type LoreCard = {
   // canvas position
   x: number;
   y: number;
+  // manual reading-order override (nullable — falls back to alphabetical)
+  sortOrder?: number;
   // freeform fields
   fields: { label: string; value: string }[];
   // connection ids (resolved via CardLink)
   tags: string[];
+  // characters only
+  characterData?: Record<string, unknown>;
 };
 
 export type CardLink = {

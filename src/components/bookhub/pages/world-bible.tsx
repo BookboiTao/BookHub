@@ -31,10 +31,28 @@ import {
   Bot,
   Check,
   ChevronRight,
+  GripVertical,
   LayoutGrid,
   Plus,
   X,
 } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { BIBLE_TABS, useRouter, type BibleTab } from "../router";
 import { useAiDock, AiDock } from "../ai-dock";
@@ -1284,6 +1302,54 @@ function useBibleTabState(bookId: string, tab: CanvasTab, focusCardId?: string) 
 }
 
 
+/* ------------------------------------------------------------------ *
+ * Hybrid ordering for Reading views: cards with a manual sort_order
+ * (set once the user drags anything) come first, in that order.
+ * Everything else falls back to alphabetical by title. Dragging assigns
+ * sequential sort_order to ALL currently-visible cards, so from then on
+ * the order is fully manual — until reset.
+ * ------------------------------------------------------------------ */
+function hybridOrder(cards: LoreCard[]): LoreCard[] {
+  return [...cards].sort((a, b) => {
+    const aHas = a.sortOrder != null;
+    const bHas = b.sortOrder != null;
+    if (aHas && bHas) return (a.sortOrder as number) - (b.sortOrder as number);
+    if (aHas) return -1;
+    if (bHas) return 1;
+    return a.title.localeCompare(b.title);
+  });
+}
+
+/* Drag handle + wrapper so any Reading-view section can be reordered. */
+function SortableSection({
+  id,
+  children,
+}: {
+  id: string;
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn("group/section relative", isDragging && "z-10 opacity-70")}
+    >
+      <button
+        {...attributes}
+        {...listeners}
+        className="absolute -left-7 top-1 cursor-grab touch-none rounded p-1 text-[var(--text-3)] opacity-0 transition-opacity hover:bg-[var(--surface-2)] hover:text-foreground active:cursor-grabbing group-hover/section:opacity-100"
+        aria-label="Drag to reorder"
+        title="Drag to reorder"
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      {children}
+    </div>
+  );
+}
+
 function WorldBibleCanvas({ bookId, tab, focusCardId, aiDock }: CanvasPageProps) {
   const rfRef = useRef<ReactFlowInstance<LoreNodeType, EdgeType> | null>(null);
 
@@ -1314,6 +1380,28 @@ function WorldBibleCanvas({ bookId, tab, focusCardId, aiDock }: CanvasPageProps)
 
   const [isTidying, setIsTidying] = useState(false);
   const [viewMode, setViewMode] = useState<"flow" | "canvas">("flow");
+  const [bibleView, setBibleView] = useState<"reading" | "canvas">("reading");
+
+  /* ----- Reading view: hybrid order + drag-to-reorder ----- */
+  const readingOrder = useMemo(() => hybridOrder(cards), [cards]);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const handleReadingDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const oldIndex = readingOrder.findIndex((c) => c.id === active.id);
+      const newIndex = readingOrder.findIndex((c) => c.id === over.id);
+      if (oldIndex === -1 || newIndex === -1) return;
+      const reordered = arrayMove(readingOrder, oldIndex, newIndex);
+      reordered.forEach((c, i) => {
+        if (c.sortOrder !== i) handleCardChange({ ...c, sortOrder: i });
+      });
+    },
+    [readingOrder, handleCardChange],
+  );
 
   /* ----- FLOW layout: compute top-down positions without writing to DB ----- */
   const flowPositions = useMemo(() => {
@@ -1525,32 +1613,53 @@ function WorldBibleCanvas({ bookId, tab, focusCardId, aiDock }: CanvasPageProps)
             </button>
           ))}
         </div>
-        {/* FLOW/CANVAS toggle */}
+        {/* READING / CANVAS toggle */}
         <div className="ml-2 flex shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5">
           <button
-            onClick={() => setViewMode("flow")}
+            onClick={() => setBibleView("reading")}
             className={cn("rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
-              viewMode === "flow" ? "bg-accent/15 text-accent" : "text-[var(--text-3)] hover:text-foreground")}
+              bibleView === "reading" ? "bg-accent/15 text-accent" : "text-[var(--text-3)] hover:text-foreground")}
           >
-            Flow
+            Reading
           </button>
           <button
-            onClick={() => setViewMode("canvas")}
+            onClick={() => setBibleView("canvas")}
             className={cn("rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
-              viewMode === "canvas" ? "bg-accent/15 text-accent" : "text-[var(--text-3)] hover:text-foreground")}
+              bibleView === "canvas" ? "bg-accent/15 text-accent" : "text-[var(--text-3)] hover:text-foreground")}
           >
             Canvas
           </button>
         </div>
-        {viewMode === "canvas" && (
-          <button
-            onClick={handleTidy}
-            className="ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-foreground"
-            aria-label="Tidy up layout"
-            title="Tidy up layout"
-          >
-            <LayoutGrid className="h-4 w-4" />
-          </button>
+        {bibleView === "canvas" && (
+          <>
+            {/* FLOW/CANVAS toggle */}
+            <div className="ml-2 flex shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5">
+              <button
+                onClick={() => setViewMode("flow")}
+                className={cn("rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  viewMode === "flow" ? "bg-accent/15 text-accent" : "text-[var(--text-3)] hover:text-foreground")}
+              >
+                Flow
+              </button>
+              <button
+                onClick={() => setViewMode("canvas")}
+                className={cn("rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  viewMode === "canvas" ? "bg-accent/15 text-accent" : "text-[var(--text-3)] hover:text-foreground")}
+              >
+                Canvas
+              </button>
+            </div>
+            {viewMode === "canvas" && (
+              <button
+                onClick={handleTidy}
+                className="ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-foreground"
+                aria-label="Tidy up layout"
+                title="Tidy up layout"
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </button>
+            )}
+          </>
         )}
         <button
           onClick={handleNewCard}
@@ -1570,6 +1679,71 @@ function WorldBibleCanvas({ bookId, tab, focusCardId, aiDock }: CanvasPageProps)
         </button>
       </div>
 
+      {bibleView === "reading" ? (
+        /* ----- READING VIEW ----- */
+        <div className="bh-scroll flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-[40rem] px-6 py-10 pl-12">
+            {cards.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-20 text-center">
+                <p className="text-sm font-medium text-foreground">No {CATEGORY_LABEL[tab] ?? tab} cards yet</p>
+                <p className="text-xs text-[var(--text-3)]">
+                  Start writing — every entry becomes a section here.
+                </p>
+                <button
+                  onClick={handleNewCard}
+                  className="mt-2 flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-foreground"
+                >
+                  <Plus className="h-3 w-3" />
+                  New card
+                </button>
+              </div>
+            ) : (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleReadingDragEnd}
+              >
+                <SortableContext
+                  items={readingOrder.map((c) => c.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="space-y-10">
+                    {readingOrder.map((card) => (
+                      <SortableSection key={card.id} id={card.id}>
+                        <section id={`card-${card.id}`} className="scroll-mt-6">
+                          <input
+                            value={card.title}
+                            onChange={(e) => handleCardChange({ ...card, title: e.target.value })}
+                            className="mb-2 w-full bg-transparent font-serif text-2xl font-semibold text-foreground focus:outline-none"
+                          />
+                          <input
+                            value={card.summary}
+                            onChange={(e) => handleCardChange({ ...card, summary: e.target.value })}
+                            placeholder="One-line summary…"
+                            className="mb-4 w-full bg-transparent text-sm text-[var(--text-2)] focus:outline-none"
+                          />
+                          <textarea
+                            value={card.body}
+                            onChange={(e) => handleCardChange({ ...card, body: e.target.value })}
+                            placeholder="Describe this entry…"
+                            rows={4}
+                            className="w-full resize-none rounded-md border border-transparent bg-transparent px-3 py-2 text-sm leading-relaxed text-foreground transition-colors focus:border-border focus:bg-[var(--surface-2)] focus:outline-none"
+                          />
+                          {card.status === "draft" && (
+                            <span className="mt-1 inline-block text-[10px] uppercase tracking-wide text-[var(--draft)]">
+                              DRAFT
+                            </span>
+                          )}
+                        </section>
+                      </SortableSection>
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            )}
+          </div>
+        </div>
+      ) : (
       <div
         className="relative flex-1 overflow-hidden"
         onDoubleClick={viewMode === "canvas" ? handlePaneDoubleClick : undefined}
@@ -1609,6 +1783,7 @@ function WorldBibleCanvas({ bookId, tab, focusCardId, aiDock }: CanvasPageProps)
 
         {!coachDismissed && <CoachBar onDismiss={dismissCoach} />}
       </div>
+      )}
 
       {selectedCard && (
         <CardDrawer

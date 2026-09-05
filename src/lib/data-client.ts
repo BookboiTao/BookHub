@@ -132,7 +132,7 @@ function mapCard(c: Record<string, unknown>): LoreCard {
     tags: c.tags as string[],
     fields: c.fields as { label: string; value: string }[],
     characterData: c.character_data as Record<string, unknown> | undefined,
-  } as LoreCard;
+  };
 }
 
 function mapLink(l: Record<string, unknown>): CardLink {
