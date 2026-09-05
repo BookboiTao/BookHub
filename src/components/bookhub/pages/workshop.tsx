@@ -21,9 +21,10 @@ import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-b
 /* ------------------------------------------------------------------ *
  * WorkShop — the incubator.
  *
- * Three panels:
- *   LEFT: unstructured notes (textarea + file upload, persisted to books.workshop_notes)
- *   RIGHT: AI chat with context = notes + existing World Bible
+ * Two-sided conversation, like chatting with an assistant:
+ *   LEFT ("You"): everything you've sent, + the compose box you write/paste
+ *                 into and send from (persisted draft, file upload/drop).
+ *   RIGHT ("AI"): the AI's replies only, each with an Extract action.
  *   BOTTOM: extracted entity candidates → dispatch to Bible tabs
  * ------------------------------------------------------------------ */
 
@@ -63,7 +64,6 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
   const [notes, setNotes] = useState("");
   const [notesDirty, setNotesDirty] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [entities, setEntities] = useState<ExtractedEntity[] | null>(null);
@@ -73,6 +73,7 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const yourScrollRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -104,6 +105,12 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (yourScrollRef.current) {
+      yourScrollRef.current.scrollTop = yourScrollRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   /* ----- File upload ----- */
   async function handleFiles(files: FileList | File[]) {
@@ -168,22 +175,25 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
     setDragOver(false);
   }
 
-  /* ----- AI chat ----- */
-  async function handleSend() {
-    const text = input.trim();
+  /* ----- AI chat -----
+   * The compose box (left panel, "notes") IS the chat input now — there's
+   * no separate input in the AI panel anymore. Sending appends your text to
+   * the left feed, clears the box, and the AI's reply appends to the right
+   * feed. Uploaded/dropped files still land in the compose box for you to
+   * review or edit before sending, same as before. */
+  async function handleComposeSend() {
+    const text = notes.trim();
     if (!text || loading) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setNotes("");
+    setNotesDirty(false);
+    updateBook.mutate({ id: bookId, updates: { workshopNotes: "" } });
     doSend(text);
-  }
-
-  async function handleSendNotesToAI() {
-    if (!notes.trim() || loading) return;
-    doSend(`Here are my raw workshop notes — help me brainstorm and structure these ideas:\n\n${notes}`);
   }
 
   async function doSend(text: string) {
     const userMsg: ChatMessage = { role: "user", content: text };
     setMessages((prev) => [...prev, userMsg]);
-    setInput("");
     setLoading(true);
     setError(null);
 
@@ -198,7 +208,6 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
             role: m.role,
             content: m.content,
           })),
-          extra: `WORKSHOP NOTES (unstructured brainstorming):\n${notes}`,
         }),
       });
 
@@ -224,6 +233,8 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
     setEntities(null);
 
     try {
+      const transcript = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
+      const draft = notes.trim() ? `\n\nUNSENT DRAFT (not yet sent to the AI):\n${notes}` : "";
       const res = await fetch("/api/ai/propose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -231,7 +242,7 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
           bookId,
           action: "extract_entities",
           scope: { type: "overview", bookId },
-          extra: `WORKSHOP NOTES:\n${notes}\n\nCHAT HISTORY:\n${messages.map((m) => `${m.role}: ${m.content}`).join("\n")}`,
+          extra: `CONVERSATION:\n${transcript}${draft}`,
         }),
       });
 
@@ -280,8 +291,12 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
         const data = await res.json();
         const cardId = data.card?.id;
         if (cardId) {
-          setCreatedCardIds((prev) => ({ ...prev, [entity.title]: cardId }));
-          tryCreateLinks();
+          // setCreatedCardIds is async — build the up-to-date map ourselves
+          // instead of reading the (still-stale) createdCardIds afterward,
+          // otherwise tryCreateLinks never sees the card we just created.
+          const updatedIds = { ...createdCardIds, [entity.title]: cardId };
+          setCreatedCardIds(updatedIds);
+          tryCreateLinks(updatedIds);
         }
       }
       setEntities((prev) => prev?.filter((_, i) => i !== index) ?? null);
@@ -290,10 +305,10 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
     }
   }
 
-  function tryCreateLinks() {
+  function tryCreateLinks(ids: Record<string, string>) {
     for (const link of extractedLinks) {
-      const fromId = createdCardIds[link.from];
-      const toId = createdCardIds[link.to];
+      const fromId = ids[link.from];
+      const toId = ids[link.to];
       if (fromId && toId) {
         fetch(`/api/books/${bookId}/links`, {
           method: "POST",
@@ -335,18 +350,19 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
         </div>
       </div>
 
-      {/* main split: left notes + right chat */}
+      {/* main split: YOU (left, your notes + questions) / AI (right, its answers only) */}
       <div className="flex flex-1 overflow-hidden">
-        {/* LEFT: unstructured notes + file upload */}
+        {/* LEFT: your side of the conversation — history of what you've sent,
+            plus the compose box you write/paste into and send from */}
         <div
-          className="flex w-[40%] min-w-[300px] flex-col border-r border-border"
+          className="relative flex w-[40%] min-w-[300px] flex-col border-r border-border"
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
         >
           <div className="shrink-0 flex items-center justify-between border-b border-border px-4 py-2">
             <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-3)]">
-              Raw ideas
+              You
             </span>
             <div className="flex items-center gap-2">
               <input
@@ -374,20 +390,35 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
               </button>
             </div>
           </div>
-          <textarea
-            value={notes}
-            onChange={(e) => handleNotesChange(e.target.value)}
-            placeholder="Paste raw text, type scattered thoughts, drop outlines…
 
-Or drag a .txt, .md, .docx file here — its content will be added to these notes.
-
-This space is meant to be messy. The AI reads this alongside your World Bible and helps you structure it."
-            className={cn(
-              "bh-scroll flex-1 resize-none border-0 bg-background p-4 font-mono text-[13px] leading-relaxed text-foreground/90 placeholder:text-[var(--text-3)] focus:outline-none transition-colors",
-              dragOver && "bg-accent/5",
+          {/* history of what you've sent */}
+          <div ref={yourScrollRef} className="bh-scroll flex-1 overflow-y-auto px-4 py-3">
+            {messages.filter((m) => m.role === "user").length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center text-center">
+                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background">
+                  <Lightbulb className="h-4 w-4 text-[var(--text-3)]" />
+                </div>
+                <p className="text-sm font-medium text-foreground">This is your space</p>
+                <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-2)]">
+                  Paste raw text, type scattered thoughts, ask a question — whatever
+                  you're brainstorming. Drop a .txt/.md/.docx file here too.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {messages
+                  .filter((m) => m.role === "user")
+                  .map((msg, i) => (
+                    <div key={i} className="rounded-lg bg-accent/10 px-3 py-2 text-sm">
+                      <div className="whitespace-pre-wrap leading-relaxed text-foreground/90">
+                        {msg.content}
+                      </div>
+                    </div>
+                  ))}
+              </div>
             )}
-            style={{ minHeight: "150px" }}
-          />
+          </div>
+
           {/* drag overlay hint */}
           {dragOver && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-accent/10">
@@ -397,29 +428,47 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
               </div>
             </div>
           )}
-          {/* Send to AI button */}
+
+          {/* compose box — this is where you write, this is where you send from */}
           <div className="shrink-0 border-t border-border p-2">
+            <textarea
+              value={notes}
+              onChange={(e) => handleNotesChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  handleComposeSend();
+                }
+              }}
+              placeholder="Write or paste here — a question, raw notes, scattered thoughts…"
+              rows={3}
+              disabled={loading}
+              className={cn(
+                "bh-scroll w-full resize-none rounded-md border border-border bg-background p-2.5 font-mono text-[13px] leading-relaxed text-foreground/90 placeholder:text-[var(--text-3)] focus:outline-none focus:border-accent/40 disabled:opacity-60",
+              )}
+            />
             <button
-              onClick={handleSendNotesToAI}
+              onClick={handleComposeSend}
               disabled={!notes.trim() || loading}
-              className="flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-medium text-accent-foreground hover:bg-accent/90 disabled:opacity-40"
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-medium text-accent-foreground hover:bg-accent/90 disabled:opacity-40"
             >
               <Send className="h-3 w-3" />
-              Brainstorm with AI
+              Send
+              <span className="ml-1 text-[10px] font-normal opacity-70">⌘/Ctrl + Enter</span>
             </button>
           </div>
         </div>
 
-        {/* RIGHT: AI chat */}
+        {/* RIGHT: the AI's answers only */}
         <div className="flex flex-1 flex-col">
           <div className="shrink-0 border-b border-border px-4 py-2">
             <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-[var(--text-3)]">
               <Bot className="h-3 w-3 text-accent" />
-              AI Conversation
+              AI
             </span>
           </div>
 
-          {/* messages */}
+          {/* AI's replies */}
           <div ref={scrollRef} className="bh-scroll flex-1 overflow-y-auto px-4 py-3">
             {/* PROMINENT ERROR BANNER — sticky above the messages */}
             {error && (
@@ -435,12 +484,12 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
             {messages.length === 0 && !loading && (
               <div className="flex h-full flex-col items-center justify-center text-center">
                 <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background">
-                  <Lightbulb className="h-4 w-4 text-[var(--text-3)]" />
+                  <Bot className="h-4 w-4 text-[var(--text-3)]" />
                 </div>
                 <p className="text-sm font-medium text-foreground">WorkShop AI</p>
                 <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-2)]">
-                  Talk through your ideas. The AI sees your raw notes (left) and your
-                  existing World Bible.
+                  Write on the left and send — the AI sees your notes and your
+                  existing World Bible, and its replies show up here.
                 </p>
                 <p className="mt-1 text-[10px] text-[var(--text-3)]">
                   When ready, click "Extract to World Bible" to create structured cards.
@@ -449,44 +498,31 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
             )}
 
             <div className="space-y-3">
-              {messages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    "rounded-lg px-3 py-2 text-sm",
-                    msg.role === "user" ? "bg-accent/10" : "bg-card",
-                  )}
-                >
-                  <div className="mb-1 flex items-center gap-1.5">
-                    {msg.role === "user" ? (
-                      <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--text-3)]">You</span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-accent">
-                        <Bot className="h-2.5 w-2.5" /> AI
-                      </span>
+              {messages
+                .filter((m) => m.role === "assistant")
+                .map((msg, i) => (
+                  <div key={i} className="rounded-lg bg-card px-3 py-2 text-sm">
+                    <div className="whitespace-pre-wrap leading-relaxed text-foreground/90">
+                      {msg.content}
+                    </div>
+                    {/* Extract button on AI messages */}
+                    {!extracting && (
+                      <div className="mt-2 flex items-center gap-2 border-t border-border/50 pt-2">
+                        <button
+                          onClick={handleExtract}
+                          disabled={!notes.trim() && messages.length === 0}
+                          className="flex items-center gap-1 rounded-md border border-accent/30 bg-accent/5 px-2.5 py-1 text-[10px] font-medium text-accent hover:bg-accent/10 disabled:opacity-40"
+                        >
+                          <Sparkles className="h-2.5 w-2.5" />
+                          Extract to World Bible
+                        </button>
+                        <span className="text-[9px] text-[var(--text-3)]">
+                          Scans notes + chat → creates draft cards
+                        </span>
+                      </div>
                     )}
                   </div>
-                  <div className="whitespace-pre-wrap leading-relaxed text-foreground/90">
-                    {msg.content}
-                  </div>
-                  {/* Extract button on AI messages */}
-                  {msg.role === "assistant" && !extracting && (
-                    <div className="mt-2 flex items-center gap-2 border-t border-border/50 pt-2">
-                      <button
-                        onClick={handleExtract}
-                        disabled={!notes.trim() && messages.length === 0}
-                        className="flex items-center gap-1 rounded-md border border-accent/30 bg-accent/5 px-2.5 py-1 text-[10px] font-medium text-accent hover:bg-accent/10 disabled:opacity-40"
-                      >
-                        <Sparkles className="h-2.5 w-2.5" />
-                        Extract to World Bible
-                      </button>
-                      <span className="text-[9px] text-[var(--text-3)]">
-                        Scans notes + chat → creates draft cards
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ))}
+                ))}
 
               {loading && (
                 <div className="flex items-center gap-2 rounded-lg bg-card px-3 py-2 text-sm text-[var(--text-3)]">
@@ -494,33 +530,6 @@ This space is meant to be messy. The AI reads this alongside your World Bible an
                   Thinking…
                 </div>
               )}
-            </div>
-          </div>
-
-          {/* input */}
-          <div className="shrink-0 border-t border-border p-3">
-            <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                placeholder="Brainstorm, ask questions, flesh out ideas…"
-                disabled={loading}
-                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-[var(--text-3)] focus:outline-none disabled:opacity-50"
-              />
-              <button
-                onClick={handleSend}
-                disabled={loading || !input.trim()}
-                className="text-[var(--text-3)] hover:text-foreground disabled:opacity-30"
-              >
-                <Send className="h-3.5 w-3.5" />
-              </button>
             </div>
           </div>
         </div>
