@@ -15,6 +15,10 @@
  * ------------------------------------------------------------------ */
 
 import { createSupabaseServer } from "@/lib/supabase-server";
+import { CONSTITUTION_SEED, FINGERPRINT_SEED } from "./constitution-seed";
+// Re-exported for backward compatibility with routes that import these
+// directly from context-builder.ts.
+export { CONSTITUTION_SEED, FINGERPRINT_SEED };
 
 const MAX_CONTEXT_CHARS = 24000;
 
@@ -30,25 +34,9 @@ export type AssembledContext = {
   totalChars: number;
 };
 
-// --- Constitution seed (shown as editable draft on first open) ---
-export const CONSTITUTION_SEED = [
-  { id: "rule-1", text: "Zero em-dashes anywhere in generated prose.", enforcement: "code" as const, active: true },
-  { id: "rule-2", text: "Avoid the Three Mistakes: over-explaining everything, giving life to things unnecessarily, writing the right words in the wrong way.", enforcement: "prompt" as const, active: true },
-  { id: "rule-3", text: "No reflexive 'suddenly', no 'seemed to' hedges without real uncertainty, no 'something shifted' vagueness — if something changes, name what.", enforcement: "code" as const, active: true },
-  { id: "rule-4", text: "No generic emotion catalog (jaw tightening, eyes narrowing) — reach for the specific, causal detail instead.", enforcement: "prompt" as const, active: true },
-  { id: "rule-5", text: "No unearned personification of objects or settings; no stacked metaphors on one image.", enforcement: "prompt" as const, active: true },
-  { id: "rule-6", text: "Chapter ends: a small open pull, never an announced hook.", enforcement: "prompt" as const, active: true },
-  { id: "rule-7", text: "Let scenes breathe — silence is allowed.", enforcement: "prompt" as const, active: true },
-  { id: "rule-8", text: "Don't editorialize causal connections between juxtaposed scenes.", enforcement: "prompt" as const, active: true },
-  { id: "rule-9", text: "AI critiques must be proportional (no rewrite for a comma), must not introduce new tells while fixing one, must not invent details absent from the passage.", enforcement: "prompt" as const, active: true },
-];
-
-export const FINGERPRINT_SEED = {
-  voice: "",
-  pacing: "",
-  tone: "",
-  samples: [] as { id: string; label: string; text: string }[],
-};
+// --- Constitution + Fingerprint seeds live in ./constitution-seed.ts ---
+// (shared with the client — ai-studio.tsx imports the same constants so
+// the server and the UI can never drift out of sync with each other.)
 
 /**
  * Get AI settings for a book from the database.

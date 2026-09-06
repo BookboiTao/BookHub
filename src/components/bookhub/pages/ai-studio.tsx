@@ -16,6 +16,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { PROVIDER_NOTES, type ProviderKey } from "@/lib/ai/provider-catalog";
+import { CONSTITUTION_SEED, FINGERPRINT_SEED, type ConstitutionRule, type Fingerprint } from "@/lib/ai/constitution-seed";
 
 /* ------------------------------------------------------------------ *
  * AI Studio — the control room.
@@ -29,20 +30,6 @@ import { PROVIDER_NOTES, type ProviderKey } from "@/lib/ai/provider-catalog";
  *
  * Provider status row on top: hits /api/ai/test on load.
  * ------------------------------------------------------------------ */
-
-type ConstitutionRule = {
-  id: string;
-  text: string;
-  enforcement: "prompt" | "code";
-  active: boolean;
-};
-
-type Fingerprint = {
-  voice: string;
-  pacing: string;
-  tone: string;
-  samples: { id: string; label: string; text: string }[];
-};
 
 type ProviderModel = { id: string; label: string };
 
@@ -75,24 +62,7 @@ type UsageRow = {
   created_at: string;
 };
 
-const CONSTITUTION_SEED: ConstitutionRule[] = [
-  { id: "rule-1", text: "Zero em-dashes anywhere in generated prose.", enforcement: "code", active: true },
-  { id: "rule-2", text: "Avoid the Three Mistakes: over-explaining everything, giving life to things unnecessarily, writing the right words in the wrong way.", enforcement: "prompt", active: true },
-  { id: "rule-3", text: "No reflexive 'suddenly', no 'seemed to' hedges without real uncertainty, no 'something shifted' vagueness — if something changes, name what.", enforcement: "code", active: true },
-  { id: "rule-4", text: "No generic emotion catalog (jaw tightening, eyes narrowing) — reach for the specific, causal detail instead.", enforcement: "prompt", active: true },
-  { id: "rule-5", text: "No unearned personification of objects or settings; no stacked metaphors on one image.", enforcement: "prompt", active: true },
-  { id: "rule-6", text: "Chapter ends: a small open pull, never an announced hook.", enforcement: "prompt", active: true },
-  { id: "rule-7", text: "Let scenes breathe — silence is allowed.", enforcement: "prompt", active: true },
-  { id: "rule-8", text: "Don't editorialize causal connections between juxtaposed scenes.", enforcement: "prompt", active: true },
-  { id: "rule-9", text: "AI critiques must be proportional (no rewrite for a comma), must not introduce new tells while fixing one, must not invent details absent from the passage.", enforcement: "prompt", active: true },
-];
 
-const FINGERPRINT_SEED: Fingerprint = {
-  voice: "",
-  pacing: "",
-  tone: "",
-  samples: [],
-};
 
 const TASKS = ["chat", "brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities"] as const;
 type Task = typeof TASKS[number];
