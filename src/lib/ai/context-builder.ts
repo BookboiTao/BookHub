@@ -15,10 +15,11 @@
  * ------------------------------------------------------------------ */
 
 import { createSupabaseServer } from "@/lib/supabase-server";
-import { CONSTITUTION_SEED, FINGERPRINT_SEED } from "./constitution-seed";
+import { CONSTITUTION_SEED, FINGERPRINT_SEED, type ConstitutionRule } from "./constitution-seed";
 // Re-exported for backward compatibility with routes that import these
 // directly from context-builder.ts.
 export { CONSTITUTION_SEED, FINGERPRINT_SEED };
+export type { ConstitutionRule };
 
 const MAX_CONTEXT_CHARS = 24000;
 
@@ -32,6 +33,7 @@ export type AssembledContext = {
   system: string;
   contextLayers: string[];
   totalChars: number;
+  constitution: ConstitutionRule[];
 };
 
 // --- Constitution + Fingerprint seeds live in ./constitution-seed.ts ---
@@ -270,6 +272,7 @@ export async function buildBookContext(scope: Scope, opts?: { structuredOutput?:
     system: systemPrompt,
     contextLayers: layers,
     totalChars,
+    constitution: settings.constitution,
   };
 }
 
@@ -279,7 +282,7 @@ export async function buildBookContext(scope: Scope, opts?: { structuredOutput?:
 export async function buildMessages(
   scope: Scope,
   userMessages: { role: "user" | "assistant"; content: string }[],
-): Promise<{ system: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; contextLayers: string[] }> {
+): Promise<{ system: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; contextLayers: string[]; constitution: ConstitutionRule[] }> {
   const ctx = await buildBookContext(scope);
   const messages = [
     ...userMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
@@ -296,5 +299,6 @@ export async function buildMessages(
     system: ctx.system,
     messages,
     contextLayers: ctx.contextLayers,
+    constitution: ctx.constitution,
   };
 }

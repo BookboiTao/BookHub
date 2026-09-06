@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
   } as Scope;
 
   // Assemble context + messages
-  const { system, messages: fullMessages, contextLayers } = await buildMessages(scope, messages);
+  const { system, messages: fullMessages, contextLayers, constitution } = await buildMessages(scope, messages);
 
   // Consult the router for the model to use for chat
   const settings = await getAISettings(bookId);
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
     );
 
     // Run guard on AI output
-    const violations = checkProse(response.text);
+    const violations = checkProse(response.text, constitution);
 
     return NextResponse.json({
       text: response.text,

@@ -64,7 +64,7 @@ type UsageRow = {
 
 
 
-const TASKS = ["chat", "brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities"] as const;
+const TASKS = ["chat", "brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities", "critique_prose"] as const;
 type Task = typeof TASKS[number];
 
 type Tab = "fingerprint" | "providers" | "constitution" | "router" | "usage";

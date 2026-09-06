@@ -8,7 +8,7 @@ import { z } from "zod";
 
 const proposeSchema = z.object({
   bookId: z.string(),
-  action: z.enum(["brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities"]),
+  action: z.enum(["brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities", "critique_prose"]),
   scope: z.object({
     type: z.enum(["tab", "editor", "card", "overview"]),
     bookId: z.string(),
@@ -26,6 +26,7 @@ const TASK_PROMPTS: Record<string, string> = {
   generate_summary: "Write a ~150 word world summary for this book based on the cards and content you can see. It should read as a pitch — what makes this world unique, what the central tensions are. Return only the summary text.",
   contradiction_check: "Check the world content for contradictions, inconsistencies, or canon violations. Return findings as JSON array: [{\"quote\":\"...\",\"issue\":\"...\",\"severity\":\"error\"|\"warning\",\"suggestion\":\"...\"}]. If no issues found, return empty array []. Be proportional — don't flag defensible plain statements. Return ONLY the JSON.",
   extract_entities: "Scan the workshop notes and conversation for structured worldbuilding entities that could become World Bible cards. Extract people (characters), places (geography), organizations (factions), magical systems, historical events, and creatures. Also detect relationships between the entities you extract. Return as JSON object: {\"entities\":[{\"title\":\"...\",\"summary\":\"...\",\"body\":\"...\",\"category\":\"magic|cosmology|geography|factions|history|bestiary|character\",\"tags\":[\"...\"]}],\"links\":[{\"from\":\"Entity Title A\",\"to\":\"Entity Title B\",\"label\":\"relationship type\"}]}. Only include entities with enough detail to warrant a card. Links reference entities by their title. Return ONLY the JSON object.",
+  critique_prose: "You are critiquing prose the writer drafted themselves — not writing anything. Apply the full constitution above as your rubric. While critiquing, you must follow these behavior rules exactly: (1) a fix must be proportional to the actual problem — a missing comma gets a comma, not a rewrite of the sentence's imagery; (2) a proposed fix must not introduce a new tell while resolving a different one; (3) a proposed fix must not invent new sensory or environmental details that are not already in the passage, however plausible-sounding; (4) before flagging anything, confirm it is an actual violation and not just a defensible plain statement — over-flagging erodes trust in the critique as a whole, so when genuinely uncertain, do not flag it. Return findings as a JSON array, one entry per real issue found: [{\"rule\":\"short label, e.g. 'Rule 7 — stacked metaphor'\",\"severity\":\"error\"|\"warning\",\"quote\":\"the exact phrase or sentence from the passage\",\"suggestion\":\"a specific, minimal, proportional fix\"}]. If the passage is genuinely clean, return an empty array []. Return ONLY the JSON array, no commentary before or after it.",
 };
 
 /**
@@ -70,14 +71,19 @@ export async function POST(req: NextRequest) {
 
   // Build context. Structured (JSON-only) actions skip the "you can't
   // create cards" chat reminder — see buildBookContext's doc comment.
-  const structuredActions = new Set(["brainstorm_tab", "contradiction_check", "expand_card", "extract_entities"]);
+  const structuredActions = new Set(["brainstorm_tab", "contradiction_check", "expand_card", "extract_entities", "critique_prose"]);
   const ctx = await buildBookContext(scope, { structuredOutput: structuredActions.has(action) });
 
-  // Build the task prompt
+  // Build the task prompt. critique_prose's `extra` IS the prose being
+  // critiqued, not a casual add-on instruction — label it accordingly so
+  // the model doesn't confuse "critique this" with "here's a stylistic note".
   const taskPrompt = TASK_PROMPTS[action] ?? "";
-  const userMessage = extra
-    ? `${taskPrompt}\n\nAdditional instruction from the writer: ${extra}`
-    : taskPrompt;
+  const userMessage =
+    action === "critique_prose"
+      ? `${taskPrompt}\n\nPROSE TO CRITIQUE:\n${extra ?? ""}`
+      : extra
+        ? `${taskPrompt}\n\nAdditional instruction from the writer: ${extra}`
+        : taskPrompt;
 
   // Consult router for the model to use for this action
   const settings = await getAISettings(bookId);
@@ -113,7 +119,7 @@ export async function POST(req: NextRequest) {
         system: ctx.system,
         messages: [{ role: "user", content: userMessage }],
         temperature: action === "continue_chapter" ? 0.8 : 0.6,
-        maxTokens: action === "brainstorm_tab" ? 2000 : 1500,
+        maxTokens: action === "brainstorm_tab" || action === "critique_prose" ? 2000 : 1500,
       },
       { model: resolvedModel, provider: resolvedProvider, apiKeys },
     );
@@ -130,13 +136,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Run guard on prose output (skip for structured JSON outputs)
-  const guardViolations = action === "continue_chapter" ? checkProse(response.text) : [];
+  // Run guard on prose output. critique_prose is special: the writer's own
+  // draft (in `extra`) is what's being judged, not the model's JSON reply —
+  // so the mechanical checks run against the input, giving the writer both
+  // a deterministic (guard) and a judgment-based (structured, below) pass
+  // over the same draft in one call.
+  const guardViolations =
+    action === "continue_chapter" ? checkProse(response.text, ctx.constitution)
+    : action === "critique_prose" ? checkProse(extra ?? "", ctx.constitution)
+    : [];
 
   // Parse structured responses
   let structured: unknown = undefined;
   const OBJECT_ACTIONS = new Set(["expand_card", "extract_entities"]); // model returns {...}
-  const ARRAY_ACTIONS = new Set(["brainstorm_tab", "contradiction_check"]); // model returns [...]
+  const ARRAY_ACTIONS = new Set(["brainstorm_tab", "contradiction_check", "critique_prose"]); // model returns [...]
   if (OBJECT_ACTIONS.has(action) || ARRAY_ACTIONS.has(action)) {
     try {
       // Extract JSON from the response (handles ```json fences and any

@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "./router";
 import { CrutchWordPanel } from "./crutch-word-panel";
+import { ProseCritiquePanel } from "./prose-critique-panel";
 import { AiChatPanel, type ChatMessage, type ContinuePreview } from "./ai-chat-panel";
 import { cn } from "@/lib/utils";
 import { useChapters, useCards, useGlossaryTerms, useStates, useUpdateChapter, useCreateGlossaryTerm, useCreateChapter, useCreateCard, useDrafts, useCreateDraft, useDeleteDraft } from "@/lib/hooks";
@@ -1672,6 +1673,11 @@ export function EditorPage({
               {/* ----- TOOLS TAB ----- */}
               {activeTab === "tools" && (
                 <div className="space-y-4">
+                  {/* manual "check my prose" — the gap guard.ts's own
+                      comment claimed was already covered but wasn't;
+                      checks what YOU wrote, not just AI output */}
+                  <ProseCritiquePanel bookId={bookId} chapterId={chapterId} text={text} />
+
                   {/* crutch word panel — uses the imported CrutchWordPanel.
                    * The component is built as an absolute-positioned popover
                    * (right-0 top-12 w-80), so we override those classes via

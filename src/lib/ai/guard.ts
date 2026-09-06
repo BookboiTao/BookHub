@@ -1,13 +1,27 @@
 /* ------------------------------------------------------------------ *
  * guard.ts — code-side enforcement of constitution rules.
  *
- * checkProse() runs on every AI output AND is available as a button
- * in the editor Tools tab. Returns violations, never auto-edits.
+ * checkProse() runs on every AI output AND is available as a manual
+ * "Check my prose" button in the editor Tools tab. Returns violations,
+ * never auto-edits.
  *
  * Rule numbers in violation labels match constitution-seed.ts's own
  * numbering (the Gen Novel Skill doc's 0-36 scheme) — "Rule 23" here
  * means the same rule as constitution rule id "rule-23".
+ *
+ * The `constitution` param actually matters: pass the book's active
+ * constitution and checkProse only returns violations for rules that
+ * are BOTH active and tagged enforcement:"code" there. Turn a rule off,
+ * or flip it to "prompt" in the Constitution tab, and its checker
+ * genuinely stops firing — this reads each violation's own "(Rule N)"
+ * label back against the constitution rather than needing every check
+ * broken into a separate registered function, so it stays a thin
+ * wrapper around the exact checks below rather than a rewrite of them.
+ * Omit `constitution` and every check still runs (old callers keep
+ * working unchanged).
  * ------------------------------------------------------------------ */
+
+import type { ConstitutionRule } from "./constitution-seed";
 
 export type Violation = {
   rule: string;
@@ -61,7 +75,10 @@ const TRANSITION_FATIGUE_PATTERN = /(^|\n|\.\s+)(Then,|After a while,|After,)/g;
 // Rule 23: the dual-framing chapter closer
 const DUAL_FRAMING_PATTERN = /Some\s+call(?:ed)?\s+it\s+.+?\.\s*Others,?\s+more\s+quietly,?\s+call(?:ed)?\s+it/i;
 
-export function checkProse(text: string): Violation[] {
+// Every check below is intentionally left exactly as tested (Step 1) —
+// only renamed and wrapped, not modified. See checkProse() at the bottom
+// for the constitution-aware gating.
+function runAllChecks(text: string): Violation[] {
   const violations: Violation[] = [];
   const textLower = text.toLowerCase();
 
@@ -263,4 +280,25 @@ export function checkProse(text: string): Violation[] {
   }
 
   return violations;
+}
+
+function ruleIdFromLabel(label: string): string | null {
+  const m = label.match(/Rule\s+(\d+)/i);
+  return m ? `rule-${m[1]}` : null;
+}
+
+export function checkProse(text: string, constitution?: ConstitutionRule[]): Violation[] {
+  const all = runAllChecks(text);
+  if (!constitution) return all; // no constitution passed: run everything (back-compat default)
+
+  const activeCodeIds = new Set(
+    constitution.filter((r) => r.active && r.enforcement === "code").map((r) => r.id),
+  );
+  return all.filter((v) => {
+    const id = ruleIdFromLabel(v.rule);
+    // If a violation's label doesn't map to a known rule id, don't
+    // silently drop it — only filter out ones we can actually match
+    // against the constitution's "off"/"prompt-only" state.
+    return id ? activeCodeIds.has(id) : true;
+  });
 }
