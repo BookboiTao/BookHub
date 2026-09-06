@@ -69,6 +69,38 @@ export const STORY_PROFILE_SEED: StoryProfile = {
   infoWithheld: "",
 };
 
+/* ------------------------------------------------------------------ *
+ * Merge helpers — the bug these fix: `saved ?? SEED` only falls back
+ * to the seed when the DB column is genuinely null. A book created
+ * BEFORE rules 10-36 existed already has a real, non-null 9-element
+ * constitution array saved — so it silently shadows the full seed
+ * forever, and new users never see the update. Same problem for
+ * story_profile: the column defaults to '{}'::jsonb (not null), so an
+ * existing row returns `{}` — truthy, so `??` never fires, and any
+ * code reading `storyProfile.castRoles.length` crashes on undefined.
+ * ------------------------------------------------------------------ */
+
+/** Union saved rules with the current seed by id — keeps the user's own
+ * active/enforcement edits to rules they've already seen, and adds any
+ * new rules from the seed that their saved copy predates. */
+export function mergeConstitution(saved: ConstitutionRule[] | null | undefined): ConstitutionRule[] {
+  if (!saved || saved.length === 0) return CONSTITUTION_SEED;
+  const savedIds = new Set(saved.map((r) => r.id));
+  const newFromSeed = CONSTITUTION_SEED.filter((r) => !savedIds.has(r.id));
+  return [...saved, ...newFromSeed];
+}
+
+/** Shallow-merge saved story profile fields over the seed's empty
+ * defaults, so a partial/empty `{}` from the DB default never leaves a
+ * field (especially the castRoles array) undefined. */
+export function mergeStoryProfile(saved: Partial<StoryProfile> | null | undefined): StoryProfile {
+  return {
+    ...STORY_PROFILE_SEED,
+    ...(saved ?? {}),
+    castRoles: saved?.castRoles ?? STORY_PROFILE_SEED.castRoles,
+  };
+}
+
 export const CONSTITUTION_SEED: ConstitutionRule[] = [
   { id: "rule-tm", text: "The Three Mistakes (gut-check when moving fast): over-explain everything; give life to things unnecessarily; write the right words in the wrong way.", enforcement: "prompt", active: true },
   { id: "rule-0", text: "Zero em-dashes ('—') anywhere, ever, in this user's prose. Restructure with a comma, period, semicolon, or rephrase instead.", enforcement: "code", active: true },

@@ -83,11 +83,14 @@ export function AiDock({
     }
   }, [messages, loading]);
 
-  // Clear messages when scope changes
-  useEffect(() => {
+  // Clear messages when scope changes (adjust-state-during-render pattern
+  // instead of a setState-in-effect).
+  const [lastScope, setLastScope] = useState(scope);
+  if (scope !== lastScope) {
+    setLastScope(scope);
     setMessages([]);
     setBrainstormResults(null);
-  }, [scope]);
+  }
 
   async function handleSend() {
     const text = input.trim();

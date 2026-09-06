@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
-import { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED } from "@/lib/ai/context-builder";
+import { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED, mergeConstitution, mergeStoryProfile } from "@/lib/ai/context-builder";
 import { z } from "zod";
 
 const castRoleSchema = z.object({
@@ -60,9 +60,9 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   return NextResponse.json({
-    constitution: data?.constitution ?? CONSTITUTION_SEED,
+    constitution: mergeConstitution(data?.constitution),
     fingerprint: data?.fingerprint ?? FINGERPRINT_SEED,
-    storyProfile: data?.story_profile ?? STORY_PROFILE_SEED,
+    storyProfile: mergeStoryProfile(data?.story_profile),
     router: data?.router ?? {},
   });
 }
@@ -139,9 +139,9 @@ export async function PATCH(req: NextRequest) {
   }
 
   return NextResponse.json({
-    constitution: result.data.constitution ?? CONSTITUTION_SEED,
+    constitution: mergeConstitution(result.data.constitution),
     fingerprint: result.data.fingerprint ?? FINGERPRINT_SEED,
-    storyProfile: result.data.story_profile ?? STORY_PROFILE_SEED,
+    storyProfile: mergeStoryProfile(result.data.story_profile),
     router: result.data.router ?? {},
   });
 }

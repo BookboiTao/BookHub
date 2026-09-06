@@ -16,10 +16,10 @@
  * ------------------------------------------------------------------ */
 
 import { createSupabaseServer } from "@/lib/supabase-server";
-import { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED, type ConstitutionRule, type StoryProfile } from "./constitution-seed";
+import { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED, mergeConstitution, mergeStoryProfile, type ConstitutionRule, type StoryProfile } from "./constitution-seed";
 // Re-exported for backward compatibility with routes that import these
 // directly from context-builder.ts.
-export { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED };
+export { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED, mergeConstitution, mergeStoryProfile };
 export type { ConstitutionRule, StoryProfile };
 
 const MAX_CONTEXT_CHARS = 24000;
@@ -64,9 +64,9 @@ export async function getAISettings(bookId: string) {
 
   return {
     book,
-    constitution: (settings?.constitution as typeof CONSTITUTION_SEED) ?? CONSTITUTION_SEED,
+    constitution: mergeConstitution(settings?.constitution as ConstitutionRule[] | null | undefined),
     fingerprint: (settings?.fingerprint as typeof FINGERPRINT_SEED) ?? FINGERPRINT_SEED,
-    storyProfile: (settings?.story_profile as StoryProfile) ?? STORY_PROFILE_SEED,
+    storyProfile: mergeStoryProfile(settings?.story_profile as Partial<StoryProfile> | null | undefined),
     router: (settings?.router as Record<string, string>) ?? {},
   };
 }

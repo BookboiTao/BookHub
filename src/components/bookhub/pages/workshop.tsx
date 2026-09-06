@@ -41,6 +41,24 @@ type ExtractedEntity = {
   tags: string[];
 };
 
+const VALID_CATEGORIES = ["magic", "cosmology", "geography", "factions", "history", "bestiary", "character"];
+const CATEGORY_ALIASES: Record<string, string> = {
+  location: "geography", place: "geography", region: "geography", city: "geography",
+  organization: "factions", org: "factions", group: "factions", faction: "factions",
+  person: "character", people: "character", npc: "character",
+  creature: "bestiary", monster: "bestiary", animal: "bestiary",
+  event: "history", timeline: "history",
+  spell: "magic", ability: "magic", power: "magic",
+};
+/** The model occasionally drifts from the exact category enum ("organization"
+ * instead of "factions"). Normalize known synonyms before the create-card
+ * call rejects them with a 400 the user never sees a reason for. */
+function normalizeCategory(raw: string): string {
+  const lower = raw.trim().toLowerCase();
+  if (VALID_CATEGORIES.includes(lower)) return lower;
+  return CATEGORY_ALIASES[lower] ?? "history"; // safe fallback, never silently drop the entity
+}
+
 type ExtractedLink = {
   from: string;
   to: string;
@@ -278,7 +296,7 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          category: entity.category,
+          category: normalizeCategory(entity.category),
           title: entity.title,
           summary: entity.summary,
           body: entity.body,
@@ -287,21 +305,28 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
           fields: [],
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        const cardId = data.card?.id;
-        if (cardId) {
-          // setCreatedCardIds is async — build the up-to-date map ourselves
-          // instead of reading the (still-stale) createdCardIds afterward,
-          // otherwise tryCreateLinks never sees the card we just created.
-          const updatedIds = { ...createdCardIds, [entity.title]: cardId };
-          setCreatedCardIds(updatedIds);
-          tryCreateLinks(updatedIds);
-        }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        // Leave the entity in the list on failure — silently removing it
+        // here was the actual bug: it looked like every entity had been
+        // sent even when the create call failed, with the card never
+        // actually created.
+        setError({ message: `Couldn't send "${entity.title}": ${err.error ?? `HTTP ${res.status}`}`, kind: "unknown" });
+        return;
+      }
+      const data = await res.json();
+      const cardId = data.card?.id;
+      if (cardId) {
+        // setCreatedCardIds is async — build the up-to-date map ourselves
+        // instead of reading the (still-stale) createdCardIds afterward,
+        // otherwise tryCreateLinks never sees the card we just created.
+        const updatedIds = { ...createdCardIds, [entity.title]: cardId };
+        setCreatedCardIds(updatedIds);
+        tryCreateLinks(updatedIds);
       }
       setEntities((prev) => prev?.filter((_, i) => i !== index) ?? null);
     } catch {
-      setError({ message: "Failed to create card", kind: "unknown" });
+      setError({ message: `Couldn't send "${entity.title}" — network error`, kind: "unknown" });
     }
   }
 

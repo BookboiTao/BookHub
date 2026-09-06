@@ -92,10 +92,13 @@ export function BibleSearchOverlay({
     return () => document.removeEventListener("keydown", handleKey);
   }, [flatResults, selectedIndex, onClose, onJump]);
 
-  // Reset selection when query changes
-  useEffect(() => {
+  // Reset selection when query changes (adjust-state-during-render
+  // pattern instead of a setState-in-effect).
+  const [lastQuery, setLastQuery] = useState(query);
+  if (query !== lastQuery) {
+    setLastQuery(query);
     setSelectedIndex(0);
-  }, [query]);
+  }
 
   let runningIndex = 0;
 
