@@ -9,9 +9,9 @@ import { z } from "zod";
 
 const proposeSchema = z.object({
   bookId: z.string(),
-  action: z.enum(["brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities", "critique_prose"]),
+  action: z.enum(["brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities", "critique_prose", "generate_story_profile"]),
   scope: z.object({
-    type: z.enum(["tab", "editor", "card", "overview"]),
+    type: z.enum(["tab", "editor", "card", "overview", "story_profile"]),
     bookId: z.string(),
     tab: z.string().optional(),
     chapterId: z.string().optional(),
@@ -28,6 +28,7 @@ const TASK_PROMPTS: Record<string, string> = {
   contradiction_check: "Check the world content for contradictions, inconsistencies, or canon violations. Return findings as JSON array: [{\"quote\":\"...\",\"issue\":\"...\",\"severity\":\"error\"|\"warning\",\"suggestion\":\"...\"}]. If no issues found, return empty array []. Be proportional — don't flag defensible plain statements. Return ONLY the JSON.",
   extract_entities: "Scan the workshop notes and conversation for structured worldbuilding entities that could become World Bible cards. Extract people (characters), places (geography), organizations (factions), magical systems, historical events, and creatures. Also detect relationships between the entities you extract. Return as JSON object: {\"entities\":[{\"title\":\"...\",\"summary\":\"...\",\"body\":\"...\",\"category\":\"magic|cosmology|geography|factions|history|bestiary|character\",\"tags\":[\"...\"]}],\"links\":[{\"from\":\"Entity Title A\",\"to\":\"Entity Title B\",\"label\":\"relationship type\"}]}. Only include entities with enough detail to warrant a card. Links reference entities by their title. Return ONLY the JSON object.",
   critique_prose: "You are critiquing prose the writer drafted themselves — not writing anything. Apply the full constitution above as your rubric. While critiquing, you must follow these behavior rules exactly: (1) a fix must be proportional to the actual problem — a missing comma gets a comma, not a rewrite of the sentence's imagery; (2) a proposed fix must not introduce a new tell while resolving a different one; (3) a proposed fix must not invent new sensory or environmental details that are not already in the passage, however plausible-sounding; (4) before flagging anything, confirm it is an actual violation and not just a defensible plain statement — over-flagging erodes trust in the critique as a whole, so when genuinely uncertain, do not flag it. Return findings as a JSON array, one entry per real issue found: [{\"rule\":\"short label, e.g. 'Rule 7 — stacked metaphor'\",\"severity\":\"error\"|\"warning\",\"quote\":\"the exact phrase or sentence from the passage\",\"suggestion\":\"a specific, minimal, proportional fix\"}]. If the passage is genuinely clean, return an empty array []. Return ONLY the JSON array, no commentary before or after it.",
+  generate_story_profile: "Read the chapters, story-event chronology, and characters you can see. Infer this story's Story Profile using this exact vocabulary: Structure (which shape: Three-act, Hero's Journey, Episodic, Nonlinear, Parallel/braided, Iterative/cyclical, etc. — name the closest fit) and a one-line note on roughly where the story is right now within that shape; Cast configuration (Single protagonist, Multiple protagonists/ensemble, Antagonist-centered, No central character, or Reciprocal) and castRoles mapping actual character names you saw to Greimas roles (subject/object/opponent/helper/sender/receiver — only include roles you have real evidence for, don't invent one for every slot); Change (is it External, Internal, or Both); resolutionMode (Resolved, Unresolved, Near-static, or Incomplete/ongoing — 'Incomplete/ongoing' is usually correct for a story still being written); centralConflict (one line — what makes the change non-trivial, not necessarily a villain); narrationMode (POV and focalization, e.g. 'Close third, single POV' or 'Omniscient, narrator-driven'); infoWithheld (what the reader currently doesn't know that matters). If there isn't enough written yet to infer a field with real confidence, leave it as an empty string rather than guessing — an honest blank is more useful than a plausible-sounding fabrication. Return ONLY this JSON object, no commentary: {\"structure\":\"...\",\"structureNote\":\"...\",\"castConfig\":\"...\",\"castRoles\":[{\"role\":\"subject\"|\"object\"|\"opponent\"|\"helper\"|\"sender\"|\"receiver\",\"name\":\"...\"}],\"changeMode\":\"...\",\"resolutionMode\":\"...\",\"centralConflict\":\"...\",\"narrationMode\":\"...\",\"infoWithheld\":\"...\"}",
 };
 
 /**
@@ -72,7 +73,7 @@ export async function POST(req: NextRequest) {
 
   // Build context. Structured (JSON-only) actions skip the "you can't
   // create cards" chat reminder — see buildBookContext's doc comment.
-  const structuredActions = new Set(["brainstorm_tab", "contradiction_check", "expand_card", "extract_entities", "critique_prose"]);
+  const structuredActions = new Set(["brainstorm_tab", "contradiction_check", "expand_card", "extract_entities", "critique_prose", "generate_story_profile"]);
   const ctx = await buildBookContext(scope, { structuredOutput: structuredActions.has(action) });
 
   // Build the task prompt. critique_prose's `extra` IS the prose being
@@ -156,7 +157,7 @@ export async function POST(req: NextRequest) {
 
   // Parse structured responses
   let structured: unknown = undefined;
-  const OBJECT_ACTIONS = new Set(["expand_card", "extract_entities"]); // model returns {...}
+  const OBJECT_ACTIONS = new Set(["expand_card", "extract_entities", "generate_story_profile"]); // model returns {...}
   const ARRAY_ACTIONS = new Set(["brainstorm_tab", "contradiction_check", "critique_prose"]); // model returns [...]
   if (OBJECT_ACTIONS.has(action) || ARRAY_ACTIONS.has(action)) {
     try {

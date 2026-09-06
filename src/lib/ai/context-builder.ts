@@ -6,6 +6,7 @@
  *
  * Layers:
  *   0: System prompt = Constitution (active rules) + Fingerprint (voice/pacing/tone)
+ *      + Story Profile (structure/cast/foundations/narration)
  *   1: World summary (books.world_summary_body)
  *   2: Scope-dependent slices:
  *      - tab: cards in that category (canon only, title+summary+body)
@@ -15,11 +16,11 @@
  * ------------------------------------------------------------------ */
 
 import { createSupabaseServer } from "@/lib/supabase-server";
-import { CONSTITUTION_SEED, FINGERPRINT_SEED, type ConstitutionRule } from "./constitution-seed";
+import { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED, type ConstitutionRule, type StoryProfile } from "./constitution-seed";
 // Re-exported for backward compatibility with routes that import these
 // directly from context-builder.ts.
-export { CONSTITUTION_SEED, FINGERPRINT_SEED };
-export type { ConstitutionRule };
+export { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED };
+export type { ConstitutionRule, StoryProfile };
 
 const MAX_CONTEXT_CHARS = 24000;
 
@@ -27,7 +28,8 @@ export type Scope =
   | { type: "tab"; bookId: string; tab: string }
   | { type: "editor"; bookId: string; chapterId: string }
   | { type: "card"; bookId: string; cardId: string }
-  | { type: "overview"; bookId: string };
+  | { type: "overview"; bookId: string }
+  | { type: "story_profile"; bookId: string };
 
 export type AssembledContext = {
   system: string;
@@ -56,7 +58,7 @@ export async function getAISettings(bookId: string) {
   // Try to fetch from an ai_settings table if it exists
   const { data: settings } = await supabase
     .from("ai_settings")
-    .select("constitution, fingerprint, router")
+    .select("constitution, fingerprint, story_profile, router")
     .eq("book_id", bookId)
     .maybeSingle();
 
@@ -64,6 +66,7 @@ export async function getAISettings(bookId: string) {
     book,
     constitution: (settings?.constitution as typeof CONSTITUTION_SEED) ?? CONSTITUTION_SEED,
     fingerprint: (settings?.fingerprint as typeof FINGERPRINT_SEED) ?? FINGERPRINT_SEED,
+    storyProfile: (settings?.story_profile as StoryProfile) ?? STORY_PROFILE_SEED,
     router: (settings?.router as Record<string, string>) ?? {},
   };
 }
@@ -100,6 +103,26 @@ export async function buildBookContext(scope: Scope, opts?: { structuredOutput?:
     fingerprintText = `FINGERPRINT:\n${fp.voice ? `Voice: ${fp.voice}\n` : ""}${fp.pacing ? `Pacing: ${fp.pacing}\n` : ""}${fp.tone ? `Tone: ${fp.tone}` : ""}`;
   }
 
+  const sp = settings.storyProfile;
+  let storyProfileText = "";
+  if (sp && (sp.structure || sp.castConfig || sp.centralConflict || sp.narrationMode)) {
+    const roleLines = (sp.castRoles ?? [])
+      .filter((r) => r.name)
+      .map((r) => `  - ${r.role}: ${r.name}`)
+      .join("\n");
+    storyProfileText = [
+      "STORY PROFILE (the shape of this story — use this to ground every suggestion, don't just default to generic advice):",
+      sp.structure ? `Structure: ${sp.structure}${sp.structureNote ? ` — ${sp.structureNote}` : ""}` : undefined,
+      sp.castConfig ? `Cast configuration: ${sp.castConfig}` : undefined,
+      roleLines ? `Cast roles:\n${roleLines}` : undefined,
+      sp.changeMode ? `Change: ${sp.changeMode}` : undefined,
+      sp.resolutionMode ? `Resolution mode: ${sp.resolutionMode}` : undefined,
+      sp.centralConflict ? `Central conflict: ${sp.centralConflict}` : undefined,
+      sp.narrationMode ? `Narration: ${sp.narrationMode}` : undefined,
+      sp.infoWithheld ? `Currently withheld from the reader: ${sp.infoWithheld}` : undefined,
+    ].filter(Boolean).join("\n");
+  }
+
   // Glossary terms
   const { data: glossary } = await supabase
     .from("glossary_terms")
@@ -118,10 +141,11 @@ export async function buildBookContext(scope: Scope, opts?: { structuredOutput?:
       : "IMPORTANT: You CANNOT directly create, modify, or delete cards in the World Bible. You can only provide text, suggestions, and ideas. When the writer wants to add something to their World Bible, tell them to click 'Extract to World Bible' — that button scans your conversation and creates structured cards from it. Never claim you have already added something to the World Bible, because you haven't — only the writer can do that by clicking the Extract button.",
     rulesText,
     fingerprintText,
+    storyProfileText,
     glossaryText,
   ].filter(Boolean).join("\n\n");
 
-  layers.push("System: constitution + fingerprint + glossary");
+  layers.push("System: constitution + fingerprint + story profile + glossary");
   totalChars += systemPrompt.length;
 
   // --- Layer 1: World summary ---
@@ -255,6 +279,53 @@ export async function buildBookContext(scope: Scope, opts?: { structuredOutput?:
       });
       scopeContext = `ALL CARDS (overview):\n${sections.join("\n\n")}`;
     }
+  } else if (scope.type === "story_profile") {
+    // Story Profile scope — enough to infer Structure/Cast/Foundations/
+    // Narration without pulling every chapter's full text: chapter titles
+    // + a short excerpt each, the story-event chronology, and character
+    // cards (so the model can point castRoles.name at real characters).
+    const { data: chapters } = await supabase
+      .from("chapters")
+      .select("title, status, content, sort_order")
+      .eq("book_id", scope.bookId)
+      .order("sort_order", { ascending: true });
+
+    const { data: events } = await supabase
+      .from("story_events")
+      .select("title, description, sort_order")
+      .eq("book_id", scope.bookId)
+      .order("sort_order", { ascending: true });
+
+    const { data: characters } = await supabase
+      .from("cards")
+      .select("title, summary, character_data")
+      .eq("book_id", scope.bookId)
+      .eq("category", "character");
+
+    const parts: string[] = [];
+    if (chapters && chapters.length > 0) {
+      parts.push(
+        `CHAPTERS (${chapters.length} total, excerpt of each):\n` +
+        chapters.map((c: { title: string; status: string; content: string; sort_order: number }) =>
+          `Ch.${(c.sort_order ?? 0) + 1} — ${c.title} [${c.status}]\n${(c.content ?? "").slice(0, 400)}${(c.content ?? "").length > 400 ? "…" : ""}`
+        ).join("\n\n"),
+      );
+    }
+    if (events && events.length > 0) {
+      parts.push(
+        `STORY EVENT CHRONOLOGY:\n` +
+        events.map((e: { title: string; description: string }) => `- ${e.title}: ${e.description || ""}`).join("\n"),
+      );
+    }
+    if (characters && characters.length > 0) {
+      parts.push(
+        `CHARACTERS:\n` +
+        characters.map((c: { title: string; summary: string; character_data: Record<string, unknown> | null }) =>
+          `- ${c.title}: ${c.summary || ""}${c.character_data?.role ? ` (role: ${c.character_data.role})` : ""}`
+        ).join("\n"),
+      );
+    }
+    scopeContext = parts.join("\n\n");
   }
 
   layers.push(`Scope: ${scope.type}`);

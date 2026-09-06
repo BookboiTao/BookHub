@@ -16,7 +16,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { PROVIDER_NOTES, type ProviderKey } from "@/lib/ai/provider-catalog";
-import { CONSTITUTION_SEED, FINGERPRINT_SEED, type ConstitutionRule, type Fingerprint } from "@/lib/ai/constitution-seed";
+import { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED, type ConstitutionRule, type Fingerprint, type StoryProfile, type CastRole } from "@/lib/ai/constitution-seed";
 
 /* ------------------------------------------------------------------ *
  * AI Studio — the control room.
@@ -64,10 +64,10 @@ type UsageRow = {
 
 
 
-const TASKS = ["chat", "brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities", "critique_prose"] as const;
+const TASKS = ["chat", "brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities", "critique_prose", "generate_story_profile"] as const;
 type Task = typeof TASKS[number];
 
-type Tab = "fingerprint" | "providers" | "constitution" | "router" | "usage";
+type Tab = "fingerprint" | "story" | "providers" | "constitution" | "router" | "usage";
 
 export function AIStudioPage({ bookId }: { bookId: string }) {
   const [tab, setTab] = useState<Tab>("fingerprint");
@@ -76,6 +76,9 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
   const [testing, setTesting] = useState(false);
   const [constitution, setConstitution] = useState<ConstitutionRule[]>(CONSTITUTION_SEED);
   const [fingerprint, setFingerprint] = useState<Fingerprint>(FINGERPRINT_SEED);
+  const [storyProfile, setStoryProfile] = useState<StoryProfile>(STORY_PROFILE_SEED);
+  const [generatingProfile, setGeneratingProfile] = useState(false);
+  const [generateProfileError, setGenerateProfileError] = useState<string | null>(null);
   const [router, setRouter] = useState<Record<string, string>>({});
   const [usage, setUsage] = useState<UsageRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,6 +113,7 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
           const data = await settingsRes.json();
           if (data.constitution) setConstitution(data.constitution);
           if (data.fingerprint) setFingerprint(data.fingerprint);
+          if (data.storyProfile) setStoryProfile(data.storyProfile);
           if (data.router) {
             setRouter(data.router);
             lastSavedRouterRef.current = JSON.stringify(data.router);
@@ -158,7 +162,7 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
       const res = await fetch("/api/ai/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bookId, constitution, fingerprint, router }),
+        body: JSON.stringify({ bookId, constitution, fingerprint, storyProfile, router }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -175,7 +179,7 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
     } finally {
       setSaving(false);
     }
-  }, [bookId, constitution, fingerprint, router]);
+  }, [bookId, constitution, fingerprint, storyProfile, router]);
 
   // AUTO-SAVE the router on change (debounced 1.5s).
   // This prevents the "I picked Gemini for brainstorm, navigated to
@@ -320,7 +324,7 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
 
       {/* tabs */}
       <div className="mb-6 flex items-center gap-1 border-b border-border">
-        {(["fingerprint", "providers", "constitution", "router", "usage"] as Tab[]).map((t) => (
+        {(["fingerprint", "story", "providers", "constitution", "router", "usage"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -491,6 +495,195 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
 
           {/* Cut log */}
           <CutLogSection bookId={bookId} />
+        </div>
+      )}
+
+      {tab === "story" && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-card p-5">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">Story Profile</p>
+                <p className="mt-1 text-xs text-[var(--text-2)]">
+                  The shape of this story — structure, cast roles, foundations, narration. Threaded into every AI call, same as Fingerprint, so you never have to re-explain your story to it.
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  setGeneratingProfile(true);
+                  setGenerateProfileError(null);
+                  try {
+                    const res = await fetch("/api/ai/propose", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        bookId,
+                        action: "generate_story_profile",
+                        scope: { type: "story_profile", bookId },
+                      }),
+                    });
+                    if (!res.ok) {
+                      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+                      throw new Error(data.error ?? `HTTP ${res.status}`);
+                    }
+                    const data = await res.json();
+                    if (data.structured) {
+                      setStoryProfile({ ...STORY_PROFILE_SEED, ...data.structured });
+                    } else {
+                      throw new Error("The AI didn't return a usable profile. Try again, or fill it in by hand below.");
+                    }
+                  } catch (err) {
+                    setGenerateProfileError(err instanceof Error ? err.message : "Generation failed");
+                  } finally {
+                    setGeneratingProfile(false);
+                  }
+                }}
+                disabled={generatingProfile}
+                className="flex shrink-0 items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/15 disabled:opacity-50"
+              >
+                {generatingProfile ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bot className="h-3 w-3" />}
+                {generatingProfile ? "Reading your story…" : "Generate from my story"}
+              </button>
+            </div>
+            {generateProfileError && (
+              <p className="mb-3 rounded-md border border-rose-500/30 bg-rose-500/5 p-2 text-xs text-rose-400">{generateProfileError}</p>
+            )}
+            <p className="text-[11px] text-[var(--text-3)]">
+              This reads your chapters and World Bible to draft a first pass. Review and correct anything below — you know your story better than any inference. Nothing saves until you hit Save.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-lg border border-border bg-card p-5">
+              <label className="mb-2 block text-xs uppercase tracking-wide text-[var(--text-3)]">Structure</label>
+              <input
+                value={storyProfile.structure}
+                onChange={(e) => setStoryProfile({ ...storyProfile, structure: e.target.value })}
+                placeholder="Three-act, Episodic, Nonlinear…"
+                className="mb-2 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+              />
+              <textarea
+                value={storyProfile.structureNote}
+                onChange={(e) => setStoryProfile({ ...storyProfile, structureNote: e.target.value })}
+                placeholder="Roughly where the story is right now within that shape…"
+                rows={2}
+                className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+              />
+            </div>
+
+            <div className="rounded-lg border border-border bg-card p-5">
+              <label className="mb-2 block text-xs uppercase tracking-wide text-[var(--text-3)]">Cast configuration</label>
+              <input
+                value={storyProfile.castConfig}
+                onChange={(e) => setStoryProfile({ ...storyProfile, castConfig: e.target.value })}
+                placeholder="Single protagonist, Ensemble, Reciprocal…"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+              />
+            </div>
+
+            <div className="rounded-lg border border-border bg-card p-5">
+              <label className="mb-2 block text-xs uppercase tracking-wide text-[var(--text-3)]">Change</label>
+              <input
+                value={storyProfile.changeMode}
+                onChange={(e) => setStoryProfile({ ...storyProfile, changeMode: e.target.value })}
+                placeholder="External, Internal, or Both"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+              />
+            </div>
+
+            <div className="rounded-lg border border-border bg-card p-5">
+              <label className="mb-2 block text-xs uppercase tracking-wide text-[var(--text-3)]">Resolution mode</label>
+              <input
+                value={storyProfile.resolutionMode}
+                onChange={(e) => setStoryProfile({ ...storyProfile, resolutionMode: e.target.value })}
+                placeholder="Resolved, Unresolved, Near-static, Incomplete/ongoing"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+              />
+            </div>
+
+            <div className="rounded-lg border border-border bg-card p-5">
+              <label className="mb-2 block text-xs uppercase tracking-wide text-[var(--text-3)]">Narration</label>
+              <input
+                value={storyProfile.narrationMode}
+                onChange={(e) => setStoryProfile({ ...storyProfile, narrationMode: e.target.value })}
+                placeholder="Close third, single POV…"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+              />
+            </div>
+
+            <div className="rounded-lg border border-border bg-card p-5">
+              <label className="mb-2 block text-xs uppercase tracking-wide text-[var(--text-3)]">Currently withheld from the reader</label>
+              <input
+                value={storyProfile.infoWithheld}
+                onChange={(e) => setStoryProfile({ ...storyProfile, infoWithheld: e.target.value })}
+                placeholder="What the reader doesn't know yet…"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card p-5">
+            <label className="mb-2 block text-xs uppercase tracking-wide text-[var(--text-3)]">Central conflict</label>
+            <textarea
+              value={storyProfile.centralConflict}
+              onChange={(e) => setStoryProfile({ ...storyProfile, centralConflict: e.target.value })}
+              placeholder="One line — what makes the change non-trivial…"
+              rows={2}
+              className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+            />
+          </div>
+
+          {/* Cast roles */}
+          <div className="rounded-lg border border-border bg-card p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <label className="text-xs uppercase tracking-wide text-[var(--text-3)]">Cast roles</label>
+              <button
+                onClick={() => setStoryProfile({
+                  ...storyProfile,
+                  castRoles: [...storyProfile.castRoles, { role: "subject", name: "" }],
+                })}
+                className="flex items-center gap-1 text-xs text-accent hover:underline"
+              >
+                <Plus className="h-3 w-3" /> Add role
+              </button>
+            </div>
+            <div className="space-y-2">
+              {storyProfile.castRoles.length === 0 && (
+                <p className="text-xs text-[var(--text-3)]">No cast roles mapped yet — who's pursuing what, and who's resisting it?</p>
+              )}
+              {storyProfile.castRoles.map((r, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <select
+                    value={r.role}
+                    onChange={(e) => setStoryProfile({
+                      ...storyProfile,
+                      castRoles: storyProfile.castRoles.map((x, j) => j === i ? { ...x, role: e.target.value as CastRole["role"] } : x),
+                    })}
+                    className="w-32 shrink-0 rounded-md border border-border bg-background px-2 py-1.5 text-xs capitalize text-foreground focus:border-accent focus:outline-none"
+                  >
+                    {(["subject", "object", "opponent", "helper", "sender", "receiver"] as const).map((role) => (
+                      <option key={role} value={role}>{role}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={r.name}
+                    onChange={(e) => setStoryProfile({
+                      ...storyProfile,
+                      castRoles: storyProfile.castRoles.map((x, j) => j === i ? { ...x, name: e.target.value } : x),
+                    })}
+                    placeholder="Character name (from your Cast)…"
+                    className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+                  />
+                  <button
+                    onClick={() => setStoryProfile({ ...storyProfile, castRoles: storyProfile.castRoles.filter((_, j) => j !== i) })}
+                    className="p-1 text-[var(--text-3)] hover:text-rose-400"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

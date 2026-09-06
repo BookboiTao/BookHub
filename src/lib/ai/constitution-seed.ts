@@ -31,6 +31,44 @@ export type Fingerprint = {
   samples: { id: string; label: string; text: string }[];
 };
 
+/* ------------------------------------------------------------------ *
+ * Story Profile — the Study Study Guide's own vocabulary, condensed to
+ * the handful of fields that actually change the advice an assistant
+ * gives. Not a card collection like World Bible; one compact object per
+ * book, threaded into every AI call the same way Fingerprint already is.
+ * AI proposes a first draft by reading your chapters + World Bible; you
+ * correct it, same pattern as Constitution.
+ * ------------------------------------------------------------------ */
+export type CastRole = {
+  role: "subject" | "object" | "opponent" | "helper" | "sender" | "receiver";
+  cardId?: string; // points at an existing World Bible character card
+  name: string; // denormalized label, kept in sync when cardId is set
+};
+
+export type StoryProfile = {
+  structure: string; // e.g. "Three-act", "Episodic", "Nonlinear"
+  structureNote: string; // roughly where the story is right now within it
+  castConfig: string; // e.g. "Single protagonist", "Ensemble", "Reciprocal"
+  castRoles: CastRole[];
+  changeMode: string; // "External", "Internal", or "Both"
+  resolutionMode: string; // "Resolved", "Unresolved", "Near-static", "Incomplete/ongoing"
+  centralConflict: string; // one line
+  narrationMode: string; // POV/focalization, e.g. "Close third, single POV"
+  infoWithheld: string; // what's currently being withheld from the reader
+};
+
+export const STORY_PROFILE_SEED: StoryProfile = {
+  structure: "",
+  structureNote: "",
+  castConfig: "",
+  castRoles: [],
+  changeMode: "",
+  resolutionMode: "",
+  centralConflict: "",
+  narrationMode: "",
+  infoWithheld: "",
+};
+
 export const CONSTITUTION_SEED: ConstitutionRule[] = [
   { id: "rule-tm", text: "The Three Mistakes (gut-check when moving fast): over-explain everything; give life to things unnecessarily; write the right words in the wrong way.", enforcement: "prompt", active: true },
   { id: "rule-0", text: "Zero em-dashes ('—') anywhere, ever, in this user's prose. Restructure with a comma, period, semicolon, or rephrase instead.", enforcement: "code", active: true },

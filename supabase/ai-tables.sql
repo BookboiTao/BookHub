@@ -2,17 +2,23 @@
 -- BookHub — AI tables (run in Supabase SQL Editor)
 -- =====================================================================
 
--- AI settings (per-book: constitution, fingerprint, router)
+-- AI settings (per-book: constitution, fingerprint, story profile, router)
 create table if not exists public.ai_settings (
   id            uuid primary key default gen_random_uuid(),
   book_id       uuid not null references public.books(id) on delete cascade,
   user_id       uuid not null references auth.users(id) on delete cascade default auth.uid(),
   constitution  jsonb not null default '[]'::jsonb,
   fingerprint   jsonb not null default '{}'::jsonb,
+  story_profile jsonb not null default '{}'::jsonb,
   router        jsonb not null default '{}'::jsonb,
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
+
+-- Idempotent: add the column for projects that already ran this file
+-- before story_profile existed.
+alter table public.ai_settings
+  add column if not exists story_profile jsonb not null default '{}'::jsonb;
 
 -- AI usage log (per-call: provider, model, task, tokens)
 create table if not exists public.ai_usage (

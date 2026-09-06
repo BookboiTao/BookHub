@@ -1,7 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
-import { CONSTITUTION_SEED, FINGERPRINT_SEED } from "@/lib/ai/context-builder";
+import { CONSTITUTION_SEED, FINGERPRINT_SEED, STORY_PROFILE_SEED } from "@/lib/ai/context-builder";
 import { z } from "zod";
+
+const castRoleSchema = z.object({
+  role: z.enum(["subject", "object", "opponent", "helper", "sender", "receiver"]),
+  cardId: z.string().optional(),
+  name: z.string(),
+});
+
+const storyProfileSchema = z.object({
+  structure: z.string(),
+  structureNote: z.string(),
+  castConfig: z.string(),
+  castRoles: z.array(castRoleSchema),
+  changeMode: z.string(),
+  resolutionMode: z.string(),
+  centralConflict: z.string(),
+  narrationMode: z.string(),
+  infoWithheld: z.string(),
+});
 
 const patchSettingsSchema = z.object({
   bookId: z.string(),
@@ -21,6 +39,7 @@ const patchSettingsSchema = z.object({
       text: z.string(),
     })),
   }).optional(),
+  storyProfile: storyProfileSchema.optional(),
   router: z.record(z.string(), z.string()).optional(),
 });
 
@@ -36,13 +55,14 @@ export async function GET(req: NextRequest) {
 
   const { data } = await supabase
     .from("ai_settings")
-    .select("constitution, fingerprint, router")
+    .select("constitution, fingerprint, story_profile, router")
     .eq("book_id", bookId)
     .maybeSingle();
 
   return NextResponse.json({
     constitution: data?.constitution ?? CONSTITUTION_SEED,
     fingerprint: data?.fingerprint ?? FINGERPRINT_SEED,
+    storyProfile: data?.story_profile ?? STORY_PROFILE_SEED,
     router: data?.router ?? {},
   });
 }
@@ -58,7 +78,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { bookId, constitution, fingerprint, router } = parsed.data;
+  const { bookId, constitution, fingerprint, storyProfile, router } = parsed.data;
   const supabase = await createSupabaseServer();
 
   // Upsert settings
@@ -74,6 +94,7 @@ export async function PATCH(req: NextRequest) {
   };
   if (constitution !== undefined) updates.constitution = constitution;
   if (fingerprint !== undefined) updates.fingerprint = fingerprint;
+  if (storyProfile !== undefined) updates.story_profile = storyProfile;
   if (router !== undefined) updates.router = router;
 
   let result;
@@ -120,6 +141,7 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({
     constitution: result.data.constitution ?? CONSTITUTION_SEED,
     fingerprint: result.data.fingerprint ?? FINGERPRINT_SEED,
+    storyProfile: result.data.story_profile ?? STORY_PROFILE_SEED,
     router: result.data.router ?? {},
   });
 }
