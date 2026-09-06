@@ -68,7 +68,12 @@ export const PROVIDER_NOTES: Record<ProviderKey, string> = {
  * Infer the provider from a model id.
  *   - "gemini-*" → gemini
  *   - "glm-*"    → zai
- *   - Anything else → zai (the default, keyless provider)
+ *   - Anything else → zai
+ *
+ * Note: this is just model-id inference, not a "which provider needs no
+ * key" claim — both providers in MODEL_CATALOG currently require a key.
+ * See resolveProvider() in provider-clients.ts for the actual fallback
+ * used when a task has no explicit router model.
  *
  * This lets the Router tab accept arbitrary custom model ids (e.g. a
  * future "gemini-3.6-flash" or a model we haven't added to the catalog

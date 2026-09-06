@@ -27,7 +27,35 @@ export {
   type AiErrorKind,
 } from "./provider-catalog";
 
-import { MODEL_CATALOG, providerForModel, type ProviderKey } from "./provider-catalog";
+import { MODEL_CATALOG, ALL_PROVIDER_KEYS, providerForModel, type ProviderKey } from "./provider-catalog";
+
+/**
+ * Decide which provider/model an AI call should use.
+ *
+ * If the router has an explicit model for this task, honor it. Otherwise —
+ * this matters — DON'T blindly fall back to "zai": every provider in
+ * MODEL_CATALOG currently requires its own API key (despite z.ai being
+ * described in a couple of places as "free, no key" — it isn't; it just
+ * has a free tier once you've added your own key). A book with only a
+ * Gemini key saved would otherwise have every unrouted task (most
+ * conspicuously extract_entities, which isn't even in the Router UI's task
+ * list yet) silently try z.ai, fail with "Z.ai API key is missing", and
+ * look broken even though the writer DID set up a provider.
+ *
+ * Instead, fall back to whichever provider the user actually has a saved
+ * key for. Only if they have none at all do we fall through to z.ai's
+ * default (so the error message they see is the familiar "add a key").
+ */
+export function resolveProvider(
+  routerModel: string | undefined,
+  apiKeys: Partial<Record<ProviderKey, string>>,
+): { model?: string; provider: ProviderKey } {
+  if (routerModel) {
+    return { model: routerModel, provider: providerForModel(routerModel) };
+  }
+  const withKey = ALL_PROVIDER_KEYS.find((p) => apiKeys[p]);
+  return { model: undefined, provider: withKey ?? "zai" };
+}
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant";

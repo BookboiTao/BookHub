@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
-import { callAI, providerForModel, MODEL_CATALOG, type ProviderKey } from "@/lib/ai/provider-clients";
+import { callAI, resolveProvider, MODEL_CATALOG, type ProviderKey } from "@/lib/ai/provider-clients";
 import { buildMessages, getAISettings, type Scope } from "@/lib/ai/context-builder";
 import { checkProse } from "@/lib/ai/guard";
 import { classifyAiError } from "@/lib/ai/provider-catalog";
@@ -75,19 +75,21 @@ export async function POST(req: NextRequest) {
   // router (or explicit request) selects.
   const apiKeys = await loadUserApiKeys(user.id);
 
-  // If the router points to a provider that needs a key, validate it's present.
-  if (routerModel) {
-    const p = providerForModel(routerModel);
-    if (MODEL_CATALOG[p].requiresApiKey && !apiKeys[p]) {
-      return NextResponse.json(
-        {
-          error: `Router is set to use ${MODEL_CATALOG[p].label} for chat, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`,
-          error_kind: "missing_key",
-          provider: p,
-        },
-        { status: 400 },
-      );
-    }
+  // Resolve which provider/model this call actually uses. Falls back to
+  // whichever provider the user has a key for when chat isn't explicitly
+  // routed — see resolveProvider's doc comment.
+  const { model: resolvedModel, provider: resolvedProvider } = resolveProvider(routerModel, apiKeys);
+  if (MODEL_CATALOG[resolvedProvider].requiresApiKey && !apiKeys[resolvedProvider]) {
+    return NextResponse.json(
+      {
+        error: routerModel
+          ? `Router is set to use ${MODEL_CATALOG[resolvedProvider].label} for chat, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`
+          : `This needs an AI provider set up first. Visit AI Studio → Providers and add a free API key (Z.ai or Gemini).`,
+        error_kind: "missing_key",
+        provider: resolvedProvider,
+      },
+      { status: 400 },
+    );
   }
 
   // Call the AI
@@ -99,7 +101,7 @@ export async function POST(req: NextRequest) {
         temperature: 0.7,
         maxTokens: 2000,
       },
-      { model: routerModel, apiKeys },
+      { model: resolvedModel, provider: resolvedProvider, apiKeys },
     );
 
     // Run guard on AI output
@@ -122,7 +124,7 @@ export async function POST(req: NextRequest) {
       {
         error: info.message,
         error_kind: info.kind,
-        provider: info.provider ?? (routerModel ? providerForModel(routerModel) : "zai"),
+        provider: info.provider ?? resolvedProvider,
       },
       { status: 500 },
     );

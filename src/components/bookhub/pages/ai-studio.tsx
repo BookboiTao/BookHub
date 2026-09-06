@@ -94,7 +94,7 @@ const FINGERPRINT_SEED: Fingerprint = {
   samples: [],
 };
 
-const TASKS = ["chat", "brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check"] as const;
+const TASKS = ["chat", "brainstorm_tab", "continue_chapter", "expand_card", "generate_summary", "contradiction_check", "extract_entities"] as const;
 type Task = typeof TASKS[number];
 
 type Tab = "fingerprint" | "providers" | "constitution" | "router" | "usage";
@@ -587,7 +587,8 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
         <div className="space-y-3">
           <div className="rounded-lg border border-border bg-card p-4">
             <p className="mb-1 text-xs text-[var(--text-3)]">
-              Route each task to a specific model. z.ai GLM is always available (free, no key). Gemini models need an API key — add one in the <button onClick={() => setTab("providers")} className="text-accent hover:underline">Providers tab</button>.
+              Route each task to a specific model. Every provider here needs its own free API key —
+              add one in the <button onClick={() => setTab("providers")} className="text-accent hover:underline">Providers tab</button> before routing tasks to it.
             </p>
             <p className="mb-3 text-[11px] text-emerald-400/70">
               ✓ Router changes auto-save after 1.5s — you can navigate away without pressing Save.
@@ -603,7 +604,8 @@ export function AIStudioPage({ bookId }: { bookId: string }) {
             ))}
           </div>
           <p className="text-xs text-[var(--text-3)]">
-            Tasks without a chosen model use the provider&apos;s default. The <span className="text-[var(--text-2)]">chat</span> task covers the AI dock in the editor and the Workshop.
+            Tasks without a chosen model fall back to whichever provider you have a key
+            for. The <span className="text-[var(--text-2)]">chat</span> task covers the AI dock in the editor and the Workshop.
           </p>
         </div>
       )}

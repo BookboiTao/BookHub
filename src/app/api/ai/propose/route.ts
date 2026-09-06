@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
-import { callAI, providerForModel, MODEL_CATALOG, type ProviderKey } from "@/lib/ai/provider-clients";
+import { callAI, resolveProvider, MODEL_CATALOG, type ProviderKey } from "@/lib/ai/provider-clients";
 import { buildBookContext, getAISettings, type Scope } from "@/lib/ai/context-builder";
 import { checkProse } from "@/lib/ai/guard";
 import { classifyAiError } from "@/lib/ai/provider-catalog";
@@ -68,7 +68,6 @@ export async function POST(req: NextRequest) {
     ...(rawScope.cardId ? { cardId: rawScope.cardId } : {}),
   } as Scope;
 
-  // Build context
   // Build context. Structured (JSON-only) actions skip the "you can't
   // create cards" chat reminder — see buildBookContext's doc comment.
   const structuredActions = new Set(["brainstorm_tab", "contradiction_check", "expand_card", "extract_entities"]);
@@ -89,19 +88,21 @@ export async function POST(req: NextRequest) {
   // router (or explicit request) selects.
   const apiKeys = await loadUserApiKeys(user.id);
 
-  // If the router points to a provider that needs a key, validate it's present.
-  if (routerModel) {
-    const p = providerForModel(routerModel);
-    if (MODEL_CATALOG[p].requiresApiKey && !apiKeys[p]) {
-      return NextResponse.json(
-        {
-          error: `Router is set to use ${MODEL_CATALOG[p].label} for this task, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`,
-          error_kind: "missing_key",
-          provider: p,
-        },
-        { status: 400 },
-      );
-    }
+  // Resolve which provider/model this call actually uses. Falls back to
+  // whichever provider the user has a key for when nothing is routed —
+  // see resolveProvider's doc comment for why that matters here specifically.
+  const { model: resolvedModel, provider: resolvedProvider } = resolveProvider(routerModel, apiKeys);
+  if (MODEL_CATALOG[resolvedProvider].requiresApiKey && !apiKeys[resolvedProvider]) {
+    return NextResponse.json(
+      {
+        error: routerModel
+          ? `Router is set to use ${MODEL_CATALOG[resolvedProvider].label} for this task, but you haven't added an API key yet. Visit AI Studio → Providers to add one.`
+          : `This needs an AI provider set up first. Visit AI Studio → Providers and add a free API key (Z.ai or Gemini).`,
+        error_kind: "missing_key",
+        provider: resolvedProvider,
+      },
+      { status: 400 },
+    );
   }
 
   // Call the AI
@@ -114,7 +115,7 @@ export async function POST(req: NextRequest) {
         temperature: action === "continue_chapter" ? 0.8 : 0.6,
         maxTokens: action === "brainstorm_tab" ? 2000 : 1500,
       },
-      { model: routerModel, apiKeys },
+      { model: resolvedModel, provider: resolvedProvider, apiKeys },
     );
   } catch (err) {
     // Classify the error so the frontend can show the right recovery hint.
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest) {
       {
         error: info.message,
         error_kind: info.kind,
-        provider: info.provider ?? (routerModel ? providerForModel(routerModel) : "zai"),
+        provider: info.provider ?? resolvedProvider,
       },
       { status: 500 },
     );
