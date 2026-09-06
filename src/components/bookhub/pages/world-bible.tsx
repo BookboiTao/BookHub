@@ -2326,11 +2326,21 @@ function HistoryTimeline({
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
+  // If a card has a field that looks like a date/era ("Date", "Year",
+  // "When", "Era"...), surface it on the timeline itself — otherwise a
+  // "timeline" is really just an ordered list with no sense of *when*.
+  const whenLabel = (card: LoreCard) =>
+    card.fields.find((f) => /date|year|when|era|time/i.test(f.label))?.value;
+
+  const TRACK_H = 300;
+  const HALF_H = TRACK_H / 2;
+
   return (
-    <div className="bh-scroll flex-1 overflow-x-auto overflow-y-hidden">
-      <div className="flex min-h-full items-center px-8">
-        {/* the timeline track */}
-        <div className="relative flex items-center gap-0">
+    <div className="bh-scroll flex-1 overflow-auto">
+      <div className="flex min-w-full items-center px-8" style={{ height: TRACK_H + 64 }}>
+        {/* the timeline track — cards alternate above/below the line so a
+            long history doesn't read as one flat, monotonous row */}
+        <div className="relative flex items-stretch gap-0" style={{ height: TRACK_H }}>
           {/* horizontal line */}
           <div className="absolute left-0 right-0 top-1/2 h-px bg-border" />
 
@@ -2338,68 +2348,118 @@ function HistoryTimeline({
             const connectedLinks = links.filter(
               (l) => l.source === card.id || l.target === card.id,
             );
-            return (
-              <div key={card.id} className="relative z-10 flex items-center">
-                <button
-                  draggable
-                  onDragStart={() => setDragId(card.id)}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setDragOverIdx(i);
-                  }}
-                  onDragEnd={() => {
-                    if (dragId && dragOverIdx !== null && dragOverIdx !== i) {
-                      // swap positions
-                      const target = sorted[dragOverIdx];
-                      if (target) {
-                        onReorder(dragId, target.x);
-                      }
+            const above = i % 2 === 0;
+            const when = whenLabel(card);
+
+            const cardButton = (
+              <button
+                draggable
+                onDragStart={() => setDragId(card.id)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverIdx(i);
+                }}
+                onDragEnd={() => {
+                  if (dragId && dragOverIdx !== null && dragOverIdx !== i) {
+                    // swap positions
+                    const target = sorted[dragOverIdx];
+                    if (target) {
+                      onReorder(dragId, target.x);
                     }
-                    setDragId(null);
-                    setDragOverIdx(null);
-                  }}
-                  onDragLeave={() => setDragOverIdx(null)}
-                  onClick={() => onSelect(card.id)}
-                  className={cn(
-                    "group relative flex w-[180px] flex-col items-center gap-2 rounded-lg border p-3 transition-colors",
-                    selectedId === card.id
-                      ? "border-accent bg-accent/5"
-                      : "border-border bg-card hover:border-accent/40",
-                    dragOverIdx === i && "ring-2 ring-accent/30",
-                  )}
-                >
-                  {/* the dot on the line */}
-                  <span
-                    className={cn(
-                      "absolute top-1/2 left-[-6px] h-2.5 w-2.5 -translate-y-1/2 rounded-full border-2 transition-colors",
-                      selectedId === card.id
-                        ? "border-accent bg-accent"
-                        : "border-border bg-card",
-                    )}
-                  />
+                  }
+                  setDragId(null);
+                  setDragOverIdx(null);
+                }}
+                onDragLeave={() => setDragOverIdx(null)}
+                onClick={() => onSelect(card.id)}
+                className={cn(
+                  "group flex w-[180px] flex-col items-center gap-1.5 rounded-lg border p-3 transition-colors",
+                  selectedId === card.id
+                    ? "border-accent bg-accent/5"
+                    : "border-border bg-card hover:border-accent/40",
+                  dragOverIdx === i && "ring-2 ring-accent/30",
+                )}
+              >
+                {when ? (
+                  <span className="text-[11px] font-medium text-accent">{when}</span>
+                ) : (
                   <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--text-3)]">
                     Event {i + 1}
                   </span>
-                  <span className="text-center text-[13px] font-semibold text-foreground">
-                    {card.title}
+                )}
+                <span className="text-center text-[13px] font-semibold text-foreground">
+                  {card.title}
+                </span>
+                {card.summary && (
+                  <span className="line-clamp-2 text-center text-[11px] text-[var(--text-2)]">
+                    {card.summary}
                   </span>
-                  {card.summary && (
-                    <span className="line-clamp-2 text-center text-[11px] text-[var(--text-2)]">
-                      {card.summary}
-                    </span>
-                  )}
-                  {connectedLinks.length > 0 && (
-                    <span className="text-[10px] text-[var(--text-3)]">
-                      {connectedLinks.length} link{connectedLinks.length !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                  {card.status === "draft" && (
-                    <span className="text-[9px] uppercase tracking-wide text-[var(--draft)]">
-                      DRAFT
-                    </span>
-                  )}
-                </button>
-                {i < sorted.length - 1 && <div className="w-8" />}
+                )}
+                {connectedLinks.length > 0 && (
+                  <span className="text-[10px] text-[var(--text-3)]">
+                    {connectedLinks.length} link{connectedLinks.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {card.status === "draft" && (
+                  <span className="text-[9px] uppercase tracking-wide text-[var(--draft)]">
+                    DRAFT
+                  </span>
+                )}
+              </button>
+            );
+
+            const connector = (
+              <div
+                className={cn(
+                  "w-px shrink-0 bg-border transition-colors",
+                  selectedId === card.id && "bg-accent",
+                )}
+                style={{ height: 20 }}
+              />
+            );
+
+            const dot = (
+              <span
+                className={cn(
+                  "absolute left-1/2 top-1/2 z-10 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 transition-colors",
+                  selectedId === card.id
+                    ? "border-accent bg-accent"
+                    : "border-border bg-card",
+                )}
+              />
+            );
+
+            return (
+              <div key={card.id} className="flex items-stretch">
+                {/* two-row grid: card+connector bottom-anchored to the line
+                    (above), or top-anchored below it — so the connector
+                    always meets the line exactly, whatever the card's height */}
+                <div className="relative w-[180px]">
+                  <div
+                    className="grid w-[180px]"
+                    style={{ gridTemplateRows: `${HALF_H}px ${HALF_H}px` }}
+                  >
+                    {above ? (
+                      <>
+                        <div className="flex flex-col items-center justify-end">
+                          {cardButton}
+                          {connector}
+                        </div>
+                        <div />
+                      </>
+                    ) : (
+                      <>
+                        <div />
+                        <div className="flex flex-col items-center justify-start">
+                          {connector}
+                          {cardButton}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {dot}
+                </div>
+                {i < sorted.length - 1 && <div className="w-8 shrink-0" />}
               </div>
             );
           })}
