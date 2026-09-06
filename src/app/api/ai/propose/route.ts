@@ -3,6 +3,7 @@ import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
 import { callAI, resolveProvider, MODEL_CATALOG, type ProviderKey } from "@/lib/ai/provider-clients";
 import { buildBookContext, getAISettings, type Scope } from "@/lib/ai/context-builder";
 import { checkProse } from "@/lib/ai/guard";
+import { checkGrammar } from "@/lib/ai/halpe-client";
 import { classifyAiError } from "@/lib/ai/provider-catalog";
 import { z } from "zod";
 
@@ -146,6 +147,13 @@ export async function POST(req: NextRequest) {
     : action === "critique_prose" ? checkProse(extra ?? "", ctx.constitution)
     : [];
 
+  // Third tier: real grammar/syntax parsing via HALPE Core, if it's been
+  // deployed and HALPE_SERVICE_URL is set (see halpe-client.ts). Returns
+  // null — not skipped silently, an explicit null — when unconfigured or
+  // unreachable, so the response can omit the field entirely rather than
+  // send a fake empty result.
+  const grammarViolations = action === "critique_prose" ? await checkGrammar(extra ?? "") : null;
+
   // Parse structured responses
   let structured: unknown = undefined;
   const OBJECT_ACTIONS = new Set(["expand_card", "extract_entities"]); // model returns {...}
@@ -189,5 +197,6 @@ export async function POST(req: NextRequest) {
       contextLayers: ctx.contextLayers,
     },
     guard: guardViolations.length > 0 ? guardViolations : undefined,
+    grammar: grammarViolations ?? undefined,
   });
 }

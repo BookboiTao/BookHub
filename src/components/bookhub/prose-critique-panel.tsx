@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, Loader2, ShieldCheck, Wand2 } from "lucide-react";
+import { Sparkles, Loader2, ShieldCheck, Wand2, SpellCheck2 } from "lucide-react";
 import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-banner";
 
 /* ------------------------------------------------------------------ *
@@ -39,6 +39,7 @@ export function ProseCritiquePanel({
   const [error, setError] = useState<AiErrorInfo | null>(null);
   const [guardFindings, setGuardFindings] = useState<Finding[] | null>(null);
   const [aiFindings, setAiFindings] = useState<Finding[] | null>(null);
+  const [grammarFindings, setGrammarFindings] = useState<Finding[] | null>(null);
   const [ranOnce, setRanOnce] = useState(false);
 
   async function handleCheck() {
@@ -66,6 +67,10 @@ export function ProseCritiquePanel({
       const data = await res.json();
       setGuardFindings(Array.isArray(data.guard) ? data.guard : []);
       setAiFindings(Array.isArray(data.structured) ? data.structured : []);
+      // grammar is undefined (not an empty array) when HALPE isn't
+      // deployed/configured — keep that distinction so the section
+      // simply doesn't render rather than claiming "clean, no issues".
+      setGrammarFindings(Array.isArray(data.grammar) ? data.grammar : null);
       setRanOnce(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
@@ -75,7 +80,7 @@ export function ProseCritiquePanel({
     }
   }
 
-  const totalFindings = (guardFindings?.length ?? 0) + (aiFindings?.length ?? 0);
+  const totalFindings = (guardFindings?.length ?? 0) + (aiFindings?.length ?? 0) + (grammarFindings?.length ?? 0);
 
   return (
     <div className="rounded-lg border border-border bg-card p-3">
@@ -131,6 +136,12 @@ export function ProseCritiquePanel({
                 label="AI critique"
                 hint="judgment calls, rules 28-31"
                 findings={aiFindings ?? []}
+              />
+              <FindingGroup
+                icon={<SpellCheck2 className="h-3 w-3" />}
+                label="Grammar"
+                hint="HALPE Core, real parsing"
+                findings={grammarFindings ?? []}
               />
             </>
           )}
