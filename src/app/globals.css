@@ -243,3 +243,24 @@
   background: rgba(129, 140, 248, 0.2);
   color: #f4f4f5;
 }
+
+/* ------------------------------------------------------------------ *
+ * Lexical editor — base styles for plain-text mode.
+ * Phase 1: minimal, matches the textarea it replaced. Phase 3 will
+ * add decoration styles (grammar/spelling underlines) here.
+ * ------------------------------------------------------------------ */
+.editor-paragraph {
+  margin: 0;
+}
+
+/* The ContentEditable should fill its container so clicking anywhere
+   inside the chapter area focuses the editor (matches textarea behavior). */
+.editor-paragraph,
+.lexical-content-editable {
+  min-height: inherit;
+}
+
+/* Focus-within on the wrapper div — matches the textarea's focus:border-accent */
+.bh-editor-shell:focus-within {
+  border-color: var(--accent);
+}

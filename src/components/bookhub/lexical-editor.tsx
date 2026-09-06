@@ -140,7 +140,7 @@ export function LexicalEditor({
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
-              className="focus:outline-none"
+              className="lexical-content-editable focus:outline-none"
               ariaLabel={ariaLabel ?? "Chapter editor"}
             />
           }

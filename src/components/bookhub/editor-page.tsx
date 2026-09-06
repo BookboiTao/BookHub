@@ -50,6 +50,7 @@ import { useRouter } from "./router";
 import { CrutchWordPanel } from "./crutch-word-panel";
 import { ProseCritiquePanel } from "./prose-critique-panel";
 import { AiChatPanel, type ChatMessage, type ContinuePreview } from "./ai-chat-panel";
+import { LexicalEditor } from "./lexical-editor";
 import { cn } from "@/lib/utils";
 import { useChapters, useCards, useGlossaryTerms, useStates, useUpdateChapter, useCreateGlossaryTerm, useCreateChapter, useCreateCard, useDrafts, useCreateDraft, useDeleteDraft } from "@/lib/hooks";
 import {
@@ -1444,13 +1445,15 @@ export function EditorPage({
               className="mb-6 w-full bg-transparent font-serif text-3xl font-semibold tracking-tight text-foreground placeholder:text-[var(--text-3)] focus:outline-none"
               aria-label="Chapter title"
             />
-            <textarea
+            {/* Lexical editor — Phase 1: plain-text mode, no formatting.
+                Replaces the old textarea. Storage contract unchanged:
+                loads from a plain string, writes back a plain string. */}
+            <LexicalEditor
               value={text}
-              onChange={(e) => handleTextChange(e.target.value)}
-              spellCheck
-              aria-label="Chapter editor"
+              onChange={handleTextChange}
+              ariaLabel="Chapter editor"
               placeholder="Double-click or start typing…"
-              className="min-h-[60vh] w-full resize-none rounded-lg border border-border bg-card p-6 font-serif text-[18px] leading-[1.8] text-zinc-200 placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+              className="bh-editor-shell min-h-[60vh] w-full resize-none rounded-lg border border-border bg-card p-6 font-serif text-[18px] leading-[1.8] text-zinc-200"
             />
             <p className="mt-4 text-center text-xs text-[var(--text-3)]">
               Every save is a draft you can roll back to. Type
