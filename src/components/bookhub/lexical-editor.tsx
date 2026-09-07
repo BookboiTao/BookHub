@@ -7,7 +7,7 @@ import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { type EditorState, type LexicalEditor as LexicalEditorType, $getRoot, $insertNodes } from "lexical";
+import { type EditorState, type LexicalEditor as LexicalEditorType, $getRoot, $createParagraphNode, $createTextNode } from "lexical";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ *
@@ -44,9 +44,27 @@ import { cn } from "@/lib/utils";
  * ------------------------------------------------------------------ */
 
 /**
- * Inner component that lives inside the LexicalComposer context.
- * Handles syncing external `value` → editor state.
+ * Set the editor's content from a plain string.
+ * Creates paragraph nodes for each line (split by \n), which is how
+ * Lexical PlainText mode represents text.
+ *
+ * This replaces the non-existent root.setTextContent() call —
+ * Lexical's RootNode doesn't have that method, so the old code was
+ * silently failing and the editor stayed empty.
  */
+function setEditorText(text: string) {
+  const root = $getRoot();
+  root.clear();
+  if (!text) return;
+  const lines = text.split("\n");
+  for (const line of lines) {
+    const paragraph = $createParagraphNode();
+    if (line) {
+      paragraph.append($createTextNode(line));
+    }
+    root.append(paragraph);
+  }
+}
 function ExternalSyncPlugin({
   value,
   lastEditorTextRef,
@@ -67,12 +85,7 @@ function ExternalSyncPlugin({
       const root = $getRoot();
       const currentText = root.getTextContent();
       if (value !== currentText) {
-        root.clear();
-        if (value) {
-          // Split into paragraphs and insert as separate text nodes
-          // separated by newlines, preserving the exact plain text.
-          root.setTextContent(value);
-        }
+        setEditorText(value);
         lastEditorTextRef.current = value;
       }
     }, { tag: "external-sync" });
@@ -151,8 +164,7 @@ export function LexicalEditor({
           }
           initialEditorState={value ? (editor) => {
             // Initialize the editor with the existing chapter content
-            const root = $getRoot();
-            root.setTextContent(value);
+            setEditorText(value);
             lastEditorTextRef.current = value;
           } : undefined}
         />
@@ -192,7 +204,15 @@ export function appendTextToEditor(editor: LexicalEditorType, text: string) {
     const root = $getRoot();
     const current = root.getTextContent();
     const separator = current.endsWith("\n") ? "\n" : "\n\n";
-    root.setTextContent(current + separator + text);
+    // Append the new text as paragraph nodes
+    const lines = (separator + text).split("\n");
+    for (const line of lines) {
+      const paragraph = $createParagraphNode();
+      if (line) {
+        paragraph.append($createTextNode(line));
+      }
+      root.append(paragraph);
+    }
   });
 }
 
@@ -206,7 +226,7 @@ export function replaceTextInEditor(editor: LexicalEditorType, search: string, r
     const root = $getRoot();
     const current = root.getTextContent();
     if (current.includes(search)) {
-      root.setTextContent(current.replace(search, replace));
+      setEditorText(current.replace(search, replace));
     }
   });
 }

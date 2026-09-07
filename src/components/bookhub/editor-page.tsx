@@ -174,6 +174,7 @@ type SavedDraft = {
   when: string;
   words: number;
   isMain?: boolean;
+  content: string;
 };
 
 function genHash(): string {
@@ -300,11 +301,13 @@ function DraftHistory({
   search,
   onSearch,
   onDelete,
+  onSelect,
 }: {
   drafts: SavedDraft[];
   search: string;
   onSearch: (s: string) => void;
   onDelete: (id: string) => void;
+  onSelect: (draft: SavedDraft) => void;
 }) {
   const filtered = search.trim()
     ? drafts.filter(
@@ -341,8 +344,17 @@ function DraftHistory({
           filtered.map((d, i) => (
             <div
               key={d.id}
+              onClick={() => onSelect(d)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect(d);
+                }
+              }}
               className={cn(
-                "group rounded-md px-2 py-1.5 text-xs",
+                "group cursor-pointer rounded-md px-2 py-1.5 text-xs transition-colors",
                 d.isMain
                   ? "border border-emerald-500/40 bg-emerald-500/10"
                   : i === 0 && drafts[0]?.id === d.id
@@ -902,6 +914,7 @@ export function EditorPage({
         when: formatRelativeTime(d.createdAt),
         words: d.wordCount,
         isMain: d.isMain,
+        content: d.content,
       })),
     [draftsData],
   );
@@ -1683,6 +1696,10 @@ export function EditorPage({
                     search={draftSearch}
                     onSearch={setDraftSearch}
                     onDelete={handleDeleteDraft}
+                    onSelect={(draft) => {
+                      setText(draft.content);
+                      commitChapterToStore(draft.content, title);
+                    }}
                   />
                   <div className="mt-4 flex shrink-0 gap-2 border-t border-border pt-3">
                     <button
