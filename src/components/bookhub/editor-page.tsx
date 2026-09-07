@@ -831,19 +831,57 @@ export function EditorPage({
     return () => clearInterval(id);
   }, []);
 
+  // Debounce timer for autosave — prevents a PATCH request on every keystroke.
+  // The text state (setText) updates immediately for UI responsiveness;
+  // this only delays the API call. Fixes the Vercel warning "Event handlers
+  // blocked UI updates for 368ms".
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest text/title captured for the pending save — used by the unmount
+  // cleanup so we can flush immediately without losing the last few keystrokes.
+  const pendingSaveRef = useRef<{ text: string; title: string } | null>(null);
+
   const commitChapterToStore = useCallback(
     (newText: string, newTitle: string) => {
-      updateChapter.mutate({
-        id: chapterId,
-        updates: {
-          content: newText,
-          title: newTitle,
-        },
-      });
-      setLastSavedAt(Date.now());
+      // Capture the latest values so the unmount flush can fire them
+      pendingSaveRef.current = { text: newText, title: newTitle };
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => {
+        pendingSaveRef.current = null;
+        updateChapter.mutate({
+          id: chapterId,
+          updates: {
+            content: newText,
+            title: newTitle,
+          },
+        });
+        setLastSavedAt(Date.now());
+      }, 500); // 500ms debounce — saves at most twice per second
     },
     [chapterId, updateChapter],
   );
+
+  // Flush any pending save when the component unmounts (e.g. navigating
+  // to another chapter) so the last few keystrokes aren't lost.
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        // Fire immediately with the latest pending values
+        const pending = pendingSaveRef.current;
+        if (pending) {
+          pendingSaveRef.current = null;
+          updateChapter.mutate({
+            id: chapterId,
+            updates: {
+              content: pending.text,
+              title: pending.title,
+            },
+          });
+        }
+      }
+    };
+  }, [chapterId, updateChapter]);
 
   /* ----- why modal ----- */
   const [showWhy, setShowWhy] = useState(false);
@@ -1093,10 +1131,11 @@ export function EditorPage({
 
       const active = document.activeElement;
       const tag = active?.tagName.toLowerCase();
-      const inField =
-        tag === "input" ||
-        tag === "textarea" ||
-        (active as HTMLElement | null)?.isContentEditable;
+      // Only block shortcuts in <input> and <textarea> elements (title,
+      // search, WhyModal, etc.). Do NOT block when the Lexical editor has
+      // focus — it uses contenteditable, and the user expects ⌘K, ⌘N, ⌘.,
+      // ⌘⇧R, ⌘P to work while writing.
+      const inField = tag === "input" || tag === "textarea";
 
       // ESC — exit preview OR focus (whichever is active)
       if (e.key === "Escape" && !mod) {
