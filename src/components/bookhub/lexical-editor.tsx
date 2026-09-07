@@ -70,7 +70,7 @@ function ExternalSyncPlugin({
   lastEditorTextRef,
 }: {
   value: string;
-  lastEditorTextRef: React.MutableRefObject<string>;
+  lastEditorTextRef: React.MutableRefObject<string | undefined>;
 }) {
   const [editor] = useLexicalComposerContext();
 
@@ -81,13 +81,21 @@ function ExternalSyncPlugin({
     //   but lastEditorTextRef already has the new text, so we skip.
     if (value === lastEditorTextRef.current) return;
 
+    // Read the editor's actual current text (not just the ref) — this
+    // catches the case where the editor was initialized empty (value
+    // was "" on mount because chapter data hadn't arrived yet) and now
+    // real content has arrived.
+    const editorText = editor.getEditorState().read(() => $getRoot().getTextContent());
+    if (value === editorText) {
+      // Editor already has this text — just update the ref so we don't
+      // keep checking.
+      lastEditorTextRef.current = value;
+      return;
+    }
+
     editor.update(() => {
-      const root = $getRoot();
-      const currentText = root.getTextContent();
-      if (value !== currentText) {
-        setEditorText(value);
-        lastEditorTextRef.current = value;
-      }
+      setEditorText(value);
+      lastEditorTextRef.current = value;
     }, { tag: "external-sync" });
   }, [value, editor, lastEditorTextRef]);
 
@@ -115,7 +123,10 @@ export function LexicalEditor({
   // Tracks the last text we know the editor has. Used to detect
   // whether a `value` prop change came from the editor itself (skip)
   // or from an external source (apply).
-  const lastEditorTextRef = useRef(value);
+  // Initialized to undefined (not value) so the first sync effect always
+  // runs — this catches the case where the editor mounts before chapter
+  // data arrives, then the data arrives and needs to be loaded in.
+  const lastEditorTextRef = useRef<string | undefined>(undefined);
 
   const initialConfig = {
     namespace: "BookHubChapterEditor",
@@ -162,11 +173,16 @@ export function LexicalEditor({
               {placeholder}
             </div>
           }
-          initialEditorState={value ? (editor) => {
-            // Initialize the editor with the existing chapter content
-            setEditorText(value);
-            lastEditorTextRef.current = value;
-          } : undefined}
+          initialEditorState={(editor) => {
+            // Initialize the editor with the existing chapter content.
+            // If value is empty (chapter data hasn't arrived yet — common
+            // on first mount while the API is still loading), start empty
+            // and let ExternalSyncPlugin fill it in when data arrives.
+            if (value) {
+              setEditorText(value);
+              lastEditorTextRef.current = value;
+            }
+          }}
         />
         <OnChangePlugin onChange={handleChange} ignoreSelectionChange />
         <HistoryPlugin />

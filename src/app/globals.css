@@ -248,9 +248,29 @@
  * Lexical editor — base styles for plain-text mode.
  * Phase 1: minimal, matches the textarea it replaced. Phase 3 will
  * add decoration styles (grammar/spelling underlines) here.
+ *
+ * Paragraph spacing: tight (0.5rem bottom margin). The textarea this
+ * replaced used leading-[1.8] with \n\n between paragraphs — that's
+ * ~2 line heights between paragraphs. We match that feel here:
+ *   - each paragraph has 0.5rem bottom margin
+ *   - empty paragraphs (blank lines) are 0 height so they don't double up
  * ------------------------------------------------------------------ */
 .editor-paragraph {
+  margin: 0 0 0.5rem 0;
+  line-height: 1.8; /* matches the textarea's leading-[1.8] */
+}
+
+/* Last paragraph: no bottom margin */
+.editor-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+/* Empty paragraphs (blank lines between paragraphs in source text):
+   collapse to a small height so \n\n doesn't create huge gaps */
+.editor-paragraph:empty {
   margin: 0;
+  height: 0.9rem; /* ~half a line height, enough to see it's a blank line */
+  line-height: 1;
 }
 
 /* The ContentEditable should fill its container so clicking anywhere
