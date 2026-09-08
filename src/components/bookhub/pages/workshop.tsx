@@ -31,6 +31,7 @@ import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-b
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
+  truncated?: boolean;
 };
 
 type ExtractedEntity = {
@@ -235,7 +236,55 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
       }
 
       const data = await res.json();
-      setMessages((prev) => [...prev, { role: "assistant", content: data.text }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: data.text, truncated: data.meta?.truncated }]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      setError({ message: msg, kind: undefined });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /**
+   * A reply hit the token budget and got cut off mid-thought (see
+   * meta.truncated from /api/ai/chat). Ask the model to pick up exactly
+   * where it left off and splice the continuation onto the same bubble.
+   */
+  async function handleContinueReply(index: number) {
+    const target = messages[index];
+    if (!target || loading) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bookId,
+          scope: { type: "overview", bookId },
+          messages: [
+            ...messages.slice(0, index + 1).map((m) => ({ role: m.role, content: m.content })),
+            {
+              role: "user",
+              content:
+                "Continue your previous reply exactly where it left off. Do not repeat anything you already wrote, and do not add a greeting or recap — just the continuation.",
+            },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === index ? { ...m, content: m.content + data.text, truncated: data.meta?.truncated } : m,
+        ),
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
       setError({ message: msg, kind: undefined });
@@ -530,6 +579,18 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
                     <div className="whitespace-pre-wrap leading-relaxed text-foreground/90">
                       {msg.content}
                     </div>
+                    {msg.truncated && (
+                      <div className="mt-2 flex items-center gap-2 rounded-md border border-[var(--draft)]/30 bg-[var(--draft)]/5 px-2 py-1.5">
+                        <span className="text-[10px] text-[var(--text-2)]">Response was cut off.</span>
+                        <button
+                          onClick={() => handleContinueReply(messages.indexOf(msg))}
+                          disabled={loading}
+                          className="ml-auto text-[10px] font-medium text-accent hover:underline disabled:opacity-50"
+                        >
+                          Continue
+                        </button>
+                      </div>
+                    )}
                     {/* Extract button on AI messages */}
                     {!extracting && (
                       <div className="mt-2 flex items-center gap-2 border-t border-border/50 pt-2">

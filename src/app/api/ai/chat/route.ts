@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
         system,
         messages: fullMessages,
         temperature: 0.7,
-        maxTokens: 2000,
+        maxTokens: 4096,
       },
       { model: resolvedModel, provider: resolvedProvider, apiKeys },
     );
@@ -114,6 +114,7 @@ export async function POST(req: NextRequest) {
         model: response.model,
         usage: response.usage,
         contextLayers,
+        truncated: response.truncated ?? false,
       },
       guard: violations.length > 0 ? violations : undefined,
     });

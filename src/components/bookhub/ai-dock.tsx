@@ -19,6 +19,7 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   guard?: { rule: string; severity: string; quote: string; suggestion: string }[];
+  truncated?: boolean;
 };
 
 export function useAiDock() {
@@ -92,6 +93,14 @@ export function AiDock({
     setBrainstormResults(null);
   }
 
+  function scopeBodyFor(bookId: string) {
+    return scopeData?.tab
+      ? { type: "tab" as const, bookId, tab: scopeData.tab }
+      : scopeData?.cardId
+        ? { type: "card" as const, bookId, cardId: scopeData.cardId }
+        : { type: "overview" as const, bookId };
+  }
+
   async function handleSend() {
     const text = input.trim();
     if (!text || loading || !scopeData?.bookId) return;
@@ -103,18 +112,12 @@ export function AiDock({
     setError(null);
 
     try {
-      const scopeBody = scopeData.tab
-        ? { type: "tab", bookId: scopeData.bookId, tab: scopeData.tab }
-        : scopeData.cardId
-          ? { type: "card", bookId: scopeData.bookId, cardId: scopeData.cardId }
-          : { type: "overview", bookId: scopeData.bookId };
-
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           bookId: scopeData.bookId,
-          scope: scopeBody,
+          scope: scopeBodyFor(scopeData.bookId),
           messages: [...messages, { role: "user", content: text }].map((m) => ({
             role: m.role,
             content: m.content,
@@ -130,8 +133,58 @@ export function AiDock({
       const data = await res.json();
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: data.text, guard: data.guard },
+        { role: "assistant", content: data.text, guard: data.guard, truncated: data.meta?.truncated },
       ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      setError({ message: msg, kind: undefined });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /**
+   * A reply hit the token budget and got cut off mid-thought (see
+   * meta.truncated from /api/ai/chat). Ask the model to pick up exactly
+   * where it left off and splice the continuation onto the same bubble.
+   */
+  async function handleContinueReply(index: number) {
+    const target = messages[index];
+    if (!target || loading || !scopeData?.bookId) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bookId: scopeData.bookId,
+          scope: scopeBodyFor(scopeData.bookId),
+          messages: [
+            ...messages.slice(0, index + 1).map((m) => ({ role: m.role, content: m.content })),
+            {
+              role: "user",
+              content:
+                "Continue your previous reply exactly where it left off. Do not repeat anything you already wrote, and do not add a greeting or recap — just the continuation.",
+            },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === index
+            ? { ...m, content: m.content + data.text, truncated: data.meta?.truncated }
+            : m,
+        ),
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
       setError({ message: msg, kind: undefined });
@@ -330,6 +383,18 @@ export function AiDock({
               <div className="whitespace-pre-wrap leading-relaxed text-foreground/90">
                 {msg.content}
               </div>
+              {msg.role === "assistant" && msg.truncated && (
+                <div className="mt-2 flex items-center gap-2 rounded-md border border-[var(--draft)]/30 bg-[var(--draft)]/5 px-2 py-1.5">
+                  <span className="text-[10px] text-[var(--text-2)]">Response was cut off.</span>
+                  <button
+                    onClick={() => handleContinueReply(i)}
+                    disabled={loading}
+                    className="ml-auto text-[10px] font-medium text-accent hover:underline disabled:opacity-50"
+                  >
+                    Continue
+                  </button>
+                </div>
+              )}
               {msg.guard && msg.guard.length > 0 && (
                 <div className="mt-2 rounded-md border border-[var(--draft)]/30 bg-[var(--draft)]/5 p-2">
                   <div className="flex items-center gap-1 text-[10px] font-medium text-[var(--draft)]">

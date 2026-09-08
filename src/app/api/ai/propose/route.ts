@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
         system: ctx.system,
         messages: [{ role: "user", content: userMessage }],
         temperature: action === "continue_chapter" ? 0.8 : 0.6,
-        maxTokens: action === "brainstorm_tab" || action === "critique_prose" ? 2000 : 1500,
+        maxTokens: action === "brainstorm_tab" || action === "critique_prose" ? 4096 : 3000,
       },
       { model: resolvedModel, provider: resolvedProvider, apiKeys },
     );
@@ -196,6 +196,7 @@ export async function POST(req: NextRequest) {
       model: response.model,
       usage: response.usage,
       contextLayers: ctx.contextLayers,
+      truncated: response.truncated ?? false,
     },
     guard: guardViolations.length > 0 ? guardViolations : undefined,
     grammar: grammarViolations ?? undefined,

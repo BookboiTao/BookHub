@@ -78,6 +78,14 @@ export type AIResponse = {
     completionTokens?: number;
     totalTokens?: number;
   };
+  /**
+   * True when the provider stopped generating because it hit the
+   * maxTokens budget (z.ai finish_reason "length" / Gemini finishReason
+   * "MAX_TOKENS"), NOT because the model reached a natural end. Callers
+   * should surface this — otherwise a mid-sentence cutoff silently reads
+   * as a complete reply.
+   */
+  truncated?: boolean;
 };
 
 /* ------------------------------------------------------------------ *
@@ -109,7 +117,7 @@ export async function callZai(
       model,
       messages,
       temperature: shape.temperature ?? 0.7,
-      max_tokens: shape.maxTokens ?? 2000,
+      max_tokens: shape.maxTokens ?? 4096,
     }),
   });
 
@@ -127,6 +135,7 @@ export async function callZai(
   const response = await res.json();
   const text = response?.choices?.[0]?.message?.content ?? "";
   const usage = response?.usage;
+  const finishReason = response?.choices?.[0]?.finish_reason;
 
   return {
     text,
@@ -137,6 +146,7 @@ export async function callZai(
       completionTokens: usage?.completion_tokens,
       totalTokens: usage?.total_tokens,
     },
+    truncated: finishReason === "length",
   };
 }
 
@@ -163,7 +173,7 @@ export async function callGemini(
     contents,
     generationConfig: {
       temperature: shape.temperature ?? 0.7,
-      maxOutputTokens: shape.maxTokens ?? 2000,
+      maxOutputTokens: shape.maxTokens ?? 4096,
     },
   };
 
@@ -193,6 +203,7 @@ export async function callGemini(
   const data = await res.json();
   const text: string = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).filter(Boolean).join("\n") ?? "";
   const usageMeta = data?.usageMetadata;
+  const finishReason = data?.candidates?.[0]?.finishReason;
 
   return {
     text,
@@ -203,6 +214,7 @@ export async function callGemini(
       completionTokens: usageMeta?.candidatesTokenCount,
       totalTokens: usageMeta?.totalTokenCount,
     },
+    truncated: finishReason === "MAX_TOKENS",
   };
 }
 

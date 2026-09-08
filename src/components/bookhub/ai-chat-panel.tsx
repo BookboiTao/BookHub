@@ -17,11 +17,13 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   guard?: { rule: string; severity: string; quote: string; suggestion: string }[];
+  truncated?: boolean;
 };
 
 export type ContinuePreview = {
   text: string;
   guard?: { rule: string; severity: string; quote: string; suggestion: string }[];
+  truncated?: boolean;
 };
 
 export type ChatSession = {
@@ -102,7 +104,7 @@ export function AiChatPanel({
       const data = await res.json();
       setMessages((prev: ChatMessage[]) => [
         ...prev,
-        { role: "assistant", content: data.text, guard: data.guard },
+        { role: "assistant", content: data.text, guard: data.guard, truncated: data.meta?.truncated },
       ]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
@@ -110,6 +112,57 @@ export function AiChatPanel({
       // Re-inject the user message so they can edit & resend
       setMessages((prev: ChatMessage[]) => prev.slice(0, -1));
       setInput(text);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /**
+   * A reply hit the token budget and was cut off mid-thought (see
+   * meta.truncated from /api/ai/chat). Ask the model to pick up exactly
+   * where it left off, then splice the continuation onto the same
+   * message instead of starting a new bubble.
+   */
+  async function handleContinueReply(index: number) {
+    const target = messages[index];
+    if (!target || loading) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bookId,
+          scope: { type: "editor", bookId, chapterId },
+          messages: [
+            ...messages.slice(0, index + 1).map((m) => ({ role: m.role, content: m.content })),
+            {
+              role: "user",
+              content:
+                "Continue your previous reply exactly where it left off. Do not repeat anything you already wrote, and do not add a greeting or recap — just the continuation.",
+            },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      setMessages((prev: ChatMessage[]) =>
+        prev.map((m, i) =>
+          i === index
+            ? { ...m, content: m.content + data.text, truncated: data.meta?.truncated }
+            : m,
+        ),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      setError({ message: msg, kind: undefined });
     } finally {
       setLoading(false);
     }
@@ -140,6 +193,7 @@ export function AiChatPanel({
       setContinuePreview({
         text: data.text,
         guard: data.guard,
+        truncated: data.meta?.truncated,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
@@ -260,6 +314,19 @@ export function AiChatPanel({
               <div className="whitespace-pre-wrap leading-relaxed text-foreground/90">
                 {msg.content}
               </div>
+              {/* truncation notice — the reply hit the token budget mid-thought */}
+              {msg.role === "assistant" && msg.truncated && (
+                <div className="mt-2 flex items-center gap-2 rounded-md border border-[var(--draft)]/30 bg-[var(--draft)]/5 px-2 py-1.5">
+                  <span className="text-[10px] text-[var(--text-2)]">Response was cut off.</span>
+                  <button
+                    onClick={() => handleContinueReply(i)}
+                    disabled={loading}
+                    className="ml-auto text-[10px] font-medium text-accent hover:underline disabled:opacity-50"
+                  >
+                    Continue
+                  </button>
+                </div>
+              )}
               {/* guard flags */}
               {msg.guard && msg.guard.length > 0 && (
                 <div className="mt-2 space-y-1 rounded-md border border-[var(--draft)]/30 bg-[var(--draft)]/5 p-2">
@@ -296,6 +363,11 @@ export function AiChatPanel({
               <div className="whitespace-pre-wrap font-serif text-sm leading-relaxed text-foreground/80">
                 {continuePreview.text}
               </div>
+              {continuePreview.truncated && (
+                <div className="mt-2 rounded-md border border-[var(--draft)]/30 bg-[var(--draft)]/5 px-2 py-1.5 text-[10px] text-[var(--text-2)]">
+                  This got cut off before finishing — hit &quot;Continue writing&quot; again to keep going, or Insert what&apos;s here and continue later.
+                </div>
+              )}
               {continuePreview.guard && continuePreview.guard.length > 0 && (
                 <div className="mt-2 space-y-1 rounded-md border border-[var(--draft)]/30 bg-[var(--draft)]/5 p-2">
                   <div className="flex items-center gap-1 text-[10px] font-medium text-[var(--draft)]">
