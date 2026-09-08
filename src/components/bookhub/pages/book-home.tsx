@@ -82,6 +82,12 @@ export function BookHomePage({ bookId }: { bookId: string }) {
   const branchList = branches ?? [];
   const recentChapters = [...chapterList].slice(-3).reverse();
   const lastBranchDraft = branchList[0]?.lastDraft ?? "—";
+  // book.totalWords / chapterCount / branchCount always come back 0 from the
+  // API (never aggregated server-side) — derive real numbers from the
+  // chapters/branches we already have loaded instead of trusting those fields.
+  const totalWords = chapterList.reduce((sum, c) => sum + (c.words ?? 0), 0);
+  const chapterCount = chapterList.length;
+  const branchCount = branchList.length;
 
   return (
     <div className="mx-auto max-w-4xl p-6 sm:p-8">
@@ -134,17 +140,17 @@ export function BookHomePage({ bookId }: { bookId: string }) {
       <section className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           label="Total Words"
-          value={formatWords(book.totalWords)}
+          value={formatWords(totalWords)}
           icon={BookOpen}
         />
         <StatCard
           label="Chapters"
-          value={String(book.chapterCount)}
+          value={String(chapterCount)}
           icon={FileText}
         />
         <StatCard
           label="Branches"
-          value={String(book.branchCount)}
+          value={String(branchCount)}
           icon={GitBranch}
         />
         <StatCard label="Last Draft" value={lastBranchDraft} icon={Clock} />

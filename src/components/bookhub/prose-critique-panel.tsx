@@ -30,10 +30,15 @@ export function ProseCritiquePanel({
   bookId,
   chapterId,
   text,
+  onJumpToQuote,
 }: {
   bookId: string;
   chapterId: string;
   text: string;
+  /** Selects + scrolls to a finding's quoted passage in the editor.
+   *  Returns false if the quote can no longer be found (text changed
+   *  since the check ran). */
+  onJumpToQuote: (quote: string) => boolean;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AiErrorInfo | null>(null);
@@ -130,18 +135,21 @@ export function ProseCritiquePanel({
                 label="Mechanical"
                 hint="deterministic, no AI call"
                 findings={guardFindings ?? []}
+                onJumpToQuote={onJumpToQuote}
               />
               <FindingGroup
                 icon={<Sparkles className="h-3 w-3" />}
                 label="AI critique"
                 hint="judgment calls, rules 28-31"
                 findings={aiFindings ?? []}
+                onJumpToQuote={onJumpToQuote}
               />
               <FindingGroup
                 icon={<SpellCheck2 className="h-3 w-3" />}
                 label="Grammar"
                 hint="HALPE Core, real parsing"
                 findings={grammarFindings ?? []}
+                onJumpToQuote={onJumpToQuote}
               />
             </>
           )}
@@ -156,13 +164,23 @@ function FindingGroup({
   label,
   hint,
   findings,
+  onJumpToQuote,
 }: {
   icon: React.ReactNode;
   label: string;
   hint: string;
   findings: Finding[];
+  onJumpToQuote: (quote: string) => boolean;
 }) {
+  const [missingIndex, setMissingIndex] = useState<number | null>(null);
+
   if (findings.length === 0) return null;
+
+  function handleClick(i: number, quote: string) {
+    const found = onJumpToQuote(quote);
+    setMissingIndex(found ? null : i);
+  }
+
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--text-3)]">
@@ -172,19 +190,27 @@ function FindingGroup({
       </div>
       <div className="space-y-1.5">
         {findings.map((f, i) => (
-          <div
+          <button
             key={i}
+            type="button"
+            onClick={() => handleClick(i, f.quote)}
+            title="Jump to this passage in the editor"
             className={
-              "rounded-md border p-2 text-[11px] " +
+              "w-full rounded-md border p-2 text-left text-[11px] transition-colors hover:border-accent/50 " +
               (f.severity === "error"
                 ? "border-red-500/30 bg-red-500/5"
                 : "border-border bg-[var(--surface-2)]")
             }
           >
             <div className="mb-0.5 font-medium text-foreground">{f.rule}</div>
-            <div className="mb-1 text-[var(--text-2)]">"{f.quote}"</div>
+            <div className="mb-1 text-[var(--text-2)]">&quot;{f.quote}&quot;</div>
             <div className="text-[var(--text-3)]">{f.suggestion}</div>
-          </div>
+            {missingIndex === i && (
+              <div className="mt-1 text-[10px] text-amber-400">
+                Couldn&apos;t find this passage — the text may have changed since this check ran.
+              </div>
+            )}
+          </button>
         ))}
       </div>
     </div>

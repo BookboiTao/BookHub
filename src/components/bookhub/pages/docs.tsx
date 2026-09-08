@@ -29,7 +29,7 @@ const COMMANDS = [
   { name: "New Volume", where: "Chapters page → New Volume", desc: "Group chapters into volumes (e.g. Part 1, Part 2)." },
   { name: "New Card", where: "World Bible → + button or double-click", desc: "Create a lore card in the current Bible tab." },
   { name: "Tidy Layout", where: "World Bible → grid icon", desc: "Auto-arrange all cards in a 3-column grid." },
-  { name: "@Mention", where: "Editor → type @CapitalName", desc: "Creates a character stub → navigates to Cast page to fill in details." },
+  { name: "#Name#", where: "Editor → type #name#", desc: "Creates a character stub → navigates to Cast page to fill in details." },
   { name: "!Glossary!", where: "Editor → type !term!", desc: "Marks a word for the glossary. Closing ! triggers the save prompt." },
   { name: "AI Chat", where: "Editor → AI tab, or Bible → Bot icon", desc: "Talk to the AI about your world. It sees your cards, constitution, and glossary." },
   { name: "Continue Writing", where: "Editor → AI tab → Continue button", desc: "AI generates the next paragraphs. Preview → Insert or Discard." },

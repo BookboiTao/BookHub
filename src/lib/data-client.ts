@@ -86,9 +86,9 @@ function mapBook(b: Record<string, unknown>): Book {
     synopsis: b.blurb as string ?? "",
     description: "",
     progress: 0,
-    totalWords: 0,
-    chapterCount: 0,
-    branchCount: 0,
+    totalWords: (b.total_words as number) ?? 0,
+    chapterCount: (b.chapter_count as number) ?? 0,
+    branchCount: (b.branch_count as number) ?? 0,
     updated: b.updated_at as string,
   } as Book;
 }

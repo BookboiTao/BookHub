@@ -119,19 +119,32 @@ function useReadAloud() {
 }
 
 /* ================================================================== *
- * extractMentions — pull @Names from the prose
+ * extractMentions — pull #name# mentions out of the prose
  * ================================================================== */
 
-function extractMentions(text: string): string[] {
-  const matches = text.match(/@([A-Z][a-zA-Z]+)/g) ?? [];
-  return [...new Set(matches.map((m) => m.slice(1)))];
+/** Title-cases a raw mention body, e.g. "commander idris" -> "Commander Idris". */
+function toTitleCase(s: string): string {
+  return s
+    .trim()
+    .split(/\s+/)
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w))
+    .join(" ");
 }
 
-/* Seed character name → card id lookup. The regex pulls the first
- * Capitalized word from an @mention, so `@Idris` extracts "Idris" even
- * though the seed character card is titled "Commander Idris". This lookup
- * bridges that gap so the StubToast "View in Cast" link and the Lore-tab
- * auto-cards resolve to the right character. */
+function extractMentions(text: string): string[] {
+  // #name# — delimited on both sides so multi-word names work too, e.g.
+  // "#commander idris#". The character class deliberately excludes "#" so
+  // the match always stops at the next delimiter rather than spanning
+  // across two separate mentions.
+  const matches = text.match(/#([a-zA-Z][a-zA-Z' -]{0,60}?)#/g) ?? [];
+  const names = matches.map((m) => toTitleCase(m.slice(1, -1)));
+  return [...new Set(names)];
+}
+
+/* Seed character name → card id lookup. Bridges lookups like
+ * "#idris#" -> "Idris" to seed character cards titled "Commander Idris",
+ * so the StubToast "View in Cast" link and the Lore-tab auto-cards
+ * resolve to the right character. */
 const SEED_CHAR_NAME_TO_ID: Record<string, string> = {
   elias: "char-elias",
   maren: "char-maren",
@@ -139,7 +152,7 @@ const SEED_CHAR_NAME_TO_ID: Record<string, string> = {
   bellkeeper: "char-bellkeeper",
 };
 
-/** Find a character LoreCard by @mention name. Tries the seed name→id
+/** Find a character LoreCard by #name# mention. Tries the seed name→id
  * lookup first (covers multi-word titles like "Commander Idris"), then
  * falls back to a case-insensitive exact-title match for custom cards. */
 function findCharCardByName(
@@ -402,10 +415,12 @@ function DraftHistory({
 
 function StubToast({
   name,
+  alreadyTracked,
   onDismiss,
   onView,
 }: {
   name: string;
+  alreadyTracked?: boolean;
   onDismiss: () => void;
   onView: () => void;
 }) {
@@ -416,10 +431,12 @@ function StubToast({
       </span>
       <div className="min-w-0">
         <div className="text-sm font-medium">
-          Character stub created for @{name}
+          {alreadyTracked ? `#${name}# is already in your Cast` : `Character stub created for #${name}#`}
         </div>
         <p className="text-xs text-[var(--text-2)]">
-          Added to the World Bible. Fill in details whenever you&apos;re ready.
+          {alreadyTracked
+            ? "Linked to the existing character card."
+            : "Added to the World Bible. Fill in details whenever you're ready."}
         </p>
         <div className="mt-1.5 flex gap-2">
           <button
@@ -814,6 +831,9 @@ export function EditorPage({
 
   /* ----- local text/title (synced from hook data when chapterId changes) ----- */
   const [text, setText] = useState<string>(() => chapter?.content ?? "");
+  // The live prose textarea — the "jump to location" links in the Check My
+  // Prose critique panel need this to select + scroll to a quoted passage.
+  const proseTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [title, setTitle] = useState<string>(() => chapter?.title ?? "");
   const knownStubsRef = useRef<Set<string>>(
     new Set(extractMentions(chapter?.content ?? "").map((n) => n.toLowerCase())),
@@ -920,8 +940,11 @@ export function EditorPage({
   );
   const hasMain = drafts.some((d) => d.isMain);
 
-  /* ----- stub toast ----- */
-  const [stubToast, setStubToast] = useState<string | null>(null);
+  /* ----- stub toast -----
+   * name + the id of the card actually created for it (populated once the
+   * create-card mutation resolves), so "View in Cast" can navigate straight
+   * to it instead of re-creating anything. */
+  const [stubToast, setStubToast] = useState<{ name: string; cardId?: string; alreadyTracked?: boolean } | null>(null);
 
   /* ----- glossary suggester ----- */
   const [glossarySuggestion, setGlossarySuggestion] = useState<string | null>(null);
@@ -946,16 +969,47 @@ export function EditorPage({
 
   const handleTextChange = (newText: string) => {
     setText(newText);
-    // detect new @mentions, fire one toast at a time
+    // detect new @mentions: auto-create a character stub for each one we
+    // haven't seen before (unless a matching character card already exists),
+    // and surface a toast so the writer knows it happened.
     const names = extractMentions(newText);
     const known = knownStubsRef.current;
     for (const name of names) {
       const key = name.toLowerCase();
-      if (!known.has(key)) {
-        known.add(key);
-        setStubToast(name);
+      if (known.has(key)) continue;
+      known.add(key);
+
+      const existing = findCharCardByName(cardsData ?? [], bookId, name);
+      if (existing) {
+        // Already tracked in the World Bible — nothing to create, just
+        // let them know it's linked.
+        setStubToast({ name, cardId: existing.id, alreadyTracked: true });
         break;
       }
+
+      setStubToast({ name });
+      createCardMut.mutate(
+        {
+          bookId,
+          input: {
+            category: "character" as const,
+            title: name,
+            x: 200,
+            y: 100,
+          },
+        },
+        {
+          onSuccess: (card) => {
+            setStubToast((prev) => (prev && prev.name === name ? { ...prev, cardId: card.id } : prev));
+          },
+          onError: () => {
+            // Creation failed — let them try again next time they type the mention.
+            known.delete(key);
+            setStubToast((prev) => (prev && prev.name === name ? null : prev));
+          },
+        },
+      );
+      break;
     }
     // detect glossary candidates (!terms the user explicitly marked)
     if (!glossarySuggestion) {
@@ -1238,32 +1292,54 @@ export function EditorPage({
     if (panelCollapsed) setPanelCollapsed(false);
   };
 
+  /**
+   * Locate a critique finding's quoted passage in the live textarea and
+   * select + scroll to it. Returns whether it was found — the quote can
+   * fall out of sync with the current text if the writer keeps editing
+   * after running "Check my prose".
+   */
+  const handleJumpToQuote = (quote: string): boolean => {
+    const clean = quote.trim();
+    if (!clean) return false;
+
+    let start = text.indexOf(clean);
+    let matchLen = clean.length;
+    if (start === -1) {
+      // Exact match failed (whitespace/punctuation drift since the check
+      // ran) — fall back to matching just the opening chunk of the quote.
+      const probe = clean.slice(0, Math.min(40, clean.length));
+      start = text.indexOf(probe);
+      matchLen = probe.length;
+    }
+    if (start === -1) return false;
+
+    const el = proseTextareaRef.current;
+    if (!el) return false;
+
+    el.focus();
+    el.setSelectionRange(start, start + matchLen);
+
+    // Programmatic setSelectionRange doesn't reliably auto-scroll in every
+    // browser the way keyboard-driven selection does — nudge scrollTop
+    // toward the matched line manually.
+    const lineNumber = text.slice(0, start).split("\n").length;
+    const lineHeight = parseFloat(getComputedStyle(el).lineHeight || "32") || 32;
+    el.scrollTop = Math.max(0, lineNumber * lineHeight - el.clientHeight / 2);
+
+    return true;
+  };
+
   const handleStubView = () => {
     if (!stubToast) return;
-    // Remove the @ prefix from the text (e.g. "@Cassandra" → "Cassandra")
-    const cleaned = text.replace(`@${stubToast}`, stubToast);
-    if (cleaned !== text) {
-      setText(cleaned);
-      commitChapterToStore(cleaned, title);
+    // The card was already created when the mention was first typed — just
+    // navigate to it. If the create call is still in flight, cardId will
+    // arrive a moment later via the onSuccess above; guard against that.
+    if (stubToast.cardId) {
+      navigate({ name: "cast", bookId, focusCardId: stubToast.cardId });
+    } else {
+      navigate({ name: "cast", bookId });
     }
-    // Create the character card in the DB, then navigate to Cast
-    createCardMut.mutate(
-      {
-        bookId,
-        input: {
-          category: "character" as const,
-          title: stubToast,
-          x: 200,
-          y: 100,
-        },
-      },
-      {
-        onSuccess: (card) => {
-          setStubToast(null);
-          navigate({ name: "cast", bookId, focusCardId: card.id });
-        },
-      },
-    );
+    setStubToast(null);
   };
 
   /* ----- glossary suggester: add the term to the store ----- */
@@ -1497,6 +1573,7 @@ export function EditorPage({
               aria-label="Chapter title"
             />
             <textarea
+              ref={proseTextareaRef}
               value={text}
               onChange={(e) => handleTextChange(e.target.value)}
               spellCheck
@@ -1506,7 +1583,7 @@ export function EditorPage({
             />
             <p className="mt-4 text-center text-xs text-[var(--text-3)]">
               Every save is a draft you can roll back to. Type
-              <span className="font-mono"> @Name</span> to auto-track characters.
+              <span className="font-mono"> #name#</span> to auto-track characters.
             </p>
           </div>
         </main>
@@ -1732,7 +1809,7 @@ export function EditorPage({
                   {/* manual "check my prose" — the gap guard.ts's own
                       comment claimed was already covered but wasn't;
                       checks what YOU wrote, not just AI output */}
-                  <ProseCritiquePanel bookId={bookId} chapterId={chapterId} text={text} />
+                  <ProseCritiquePanel bookId={bookId} chapterId={chapterId} text={text} onJumpToQuote={handleJumpToQuote} />
 
                   {/* crutch word panel — uses the imported CrutchWordPanel.
                    * The component is built as an absolute-positioned popover
@@ -1826,7 +1903,7 @@ export function EditorPage({
                         </dd>
                       </div>
                       <div className="flex justify-between">
-                        <dt className="text-[var(--text-2)]">@mentions</dt>
+                        <dt className="text-[var(--text-2)]">#mentions</dt>
                         <dd className="tabular-nums text-foreground">
                           {mentions.length}
                         </dd>
@@ -1894,7 +1971,8 @@ export function EditorPage({
 
       {stubToast && (
         <StubToast
-          name={stubToast}
+          name={stubToast.name}
+          alreadyTracked={stubToast.alreadyTracked}
           onDismiss={() => setStubToast(null)}
           onView={handleStubView}
         />

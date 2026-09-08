@@ -125,7 +125,16 @@ export function useCreateDraft() {
   return useMutation({
     mutationFn: ({ chapterId, input }: { chapterId: string; input: Parameters<typeof api.createDraft>[1] }) =>
       api.createDraft(chapterId, input),
-    onSuccess: (_data, { chapterId }) => qc.invalidateQueries({ queryKey: qk.drafts(chapterId) }),
+    onSuccess: (_data, { chapterId, input }) => {
+      qc.invalidateQueries({ queryKey: qk.drafts(chapterId) });
+      // Publishing (isMain) also flips the chapter's status server-side —
+      // invalidate the chapter caches too so the "Draft" badge (chapters
+      // list, editor header) picks up "Done" without a manual refresh.
+      if (input.isMain) {
+        qc.invalidateQueries({ queryKey: ["books"] });
+        qc.invalidateQueries({ queryKey: qk.chapter(chapterId) });
+      }
+    },
   });
 }
 

@@ -69,5 +69,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Publishing (isMain=true) is what the "Publish" button in the editor
+  // means from the writer's point of view — the chapter's own status field
+  // needs to flip too, otherwise it keeps showing "Draft" everywhere
+  // (chapters list, editor header) even after a successful publish.
+  if (parsed.data.isMain) {
+    const { error: statusError } = await supabase
+      .from("chapters")
+      .update({ status: "done" })
+      .eq("id", chapterId);
+    if (statusError) return NextResponse.json({ error: statusError.message }, { status: 500 });
+  }
+
   return NextResponse.json({ draft: data });
 }
