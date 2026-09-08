@@ -122,6 +122,60 @@ function useReadAloud() {
  * extractMentions — pull #name# mentions out of the prose
  * ================================================================== */
 
+/**
+ * Measures where character `index` in a textarea's value actually lands,
+ * in pixels from the top of its content — accounting for soft-wrapped
+ * lines, which plain newline-counting gets wrong for any paragraph
+ * without hard line breaks (i.e. most prose). Standard "mirror div"
+ * technique: replicate the textarea's box/font/wrapping in a hidden div,
+ * insert the text up to `index`, and read the offsetTop of a marker
+ * placed right after it.
+ */
+function getTextareaCaretTop(el: HTMLTextAreaElement, index: number): number {
+  const div = document.createElement("div");
+  const style = getComputedStyle(el);
+  const props: (keyof CSSStyleDeclaration)[] = [
+    "boxSizing",
+    "width",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "borderTopWidth",
+    "borderRightWidth",
+    "borderBottomWidth",
+    "borderLeftWidth",
+    "fontFamily",
+    "fontSize",
+    "fontWeight",
+    "fontStyle",
+    "letterSpacing",
+    "lineHeight",
+    "textTransform",
+    "wordSpacing",
+  ];
+  for (const prop of props) {
+    // @ts-expect-error — dynamic style property copy from computed style
+    div.style[prop] = style[prop];
+  }
+  div.style.position = "absolute";
+  div.style.visibility = "hidden";
+  div.style.whiteSpace = "pre-wrap";
+  div.style.wordWrap = "break-word";
+  div.style.top = "0";
+  div.style.left = "-9999px";
+  document.body.appendChild(div);
+
+  div.appendChild(document.createTextNode(el.value.slice(0, index)));
+  const marker = document.createElement("span");
+  marker.textContent = el.value.slice(index, index + 1) || ".";
+  div.appendChild(marker);
+
+  const top = marker.offsetTop;
+  document.body.removeChild(div);
+  return top;
+}
+
 /** Title-cases a raw mention body, e.g. "commander idris" -> "Commander Idris". */
 function toTitleCase(s: string): string {
   return s
@@ -415,14 +469,12 @@ function DraftHistory({
 
 function StubToast({
   name,
-  alreadyTracked,
+  onAdd,
   onDismiss,
-  onView,
 }: {
   name: string;
-  alreadyTracked?: boolean;
+  onAdd: () => void;
   onDismiss: () => void;
-  onView: () => void;
 }) {
   return (
     <div className="fixed bottom-4 right-4 z-40 flex items-start gap-3 rounded-lg border border-accent/40 bg-card p-3 shadow-xl">
@@ -431,19 +483,17 @@ function StubToast({
       </span>
       <div className="min-w-0">
         <div className="text-sm font-medium">
-          {alreadyTracked ? `#${name}# is already in your Cast` : `Character stub created for #${name}#`}
+          Add &ldquo;{name}&rdquo; to Cast?
         </div>
         <p className="text-xs text-[var(--text-2)]">
-          {alreadyTracked
-            ? "Linked to the existing character card."
-            : "Added to the World Bible. Fill in details whenever you're ready."}
+          You mentioned <span className="font-mono">#{name}#</span>. Track them as a character.
         </p>
         <div className="mt-1.5 flex gap-2">
           <button
-            onClick={onView}
+            onClick={onAdd}
             className="text-xs font-medium text-accent hover:underline"
           >
-            View in Cast
+            Add to Cast
           </button>
           <button
             onClick={onDismiss}
@@ -834,6 +884,9 @@ export function EditorPage({
   // The live prose textarea — the "jump to location" links in the Check My
   // Prose critique panel need this to select + scroll to a quoted passage.
   const proseTextareaRef = useRef<HTMLTextAreaElement>(null);
+  // Brief flash on the textarea right after a jump, since the native text
+  // selection color alone can be easy to miss on a dark background.
+  const [justJumped, setJustJumped] = useState(false);
   const [title, setTitle] = useState<string>(() => chapter?.title ?? "");
   const knownStubsRef = useRef<Set<string>>(
     new Set(extractMentions(chapter?.content ?? "").map((n) => n.toLowerCase())),
@@ -940,11 +993,8 @@ export function EditorPage({
   );
   const hasMain = drafts.some((d) => d.isMain);
 
-  /* ----- stub toast -----
-   * name + the id of the card actually created for it (populated once the
-   * create-card mutation resolves), so "View in Cast" can navigate straight
-   * to it instead of re-creating anything. */
-  const [stubToast, setStubToast] = useState<{ name: string; cardId?: string; alreadyTracked?: boolean } | null>(null);
+  /* ----- stub toast ----- */
+  const [stubToast, setStubToast] = useState<string | null>(null);
 
   /* ----- glossary suggester ----- */
   const [glossarySuggestion, setGlossarySuggestion] = useState<string | null>(null);
@@ -969,9 +1019,9 @@ export function EditorPage({
 
   const handleTextChange = (newText: string) => {
     setText(newText);
-    // detect new @mentions: auto-create a character stub for each one we
-    // haven't seen before (unless a matching character card already exists),
-    // and surface a toast so the writer knows it happened.
+    // detect new #name# mentions and ask before tracking them — creation
+    // only happens if the writer confirms via the StubToast, same pattern
+    // as the glossary suggester (never auto-created).
     const names = extractMentions(newText);
     const known = knownStubsRef.current;
     for (const name of names) {
@@ -980,35 +1030,9 @@ export function EditorPage({
       known.add(key);
 
       const existing = findCharCardByName(cardsData ?? [], bookId, name);
-      if (existing) {
-        // Already tracked in the World Bible — nothing to create, just
-        // let them know it's linked.
-        setStubToast({ name, cardId: existing.id, alreadyTracked: true });
-        break;
-      }
+      if (existing) continue; // already tracked — nothing to ask
 
-      setStubToast({ name });
-      createCardMut.mutate(
-        {
-          bookId,
-          input: {
-            category: "character" as const,
-            title: name,
-            x: 200,
-            y: 100,
-          },
-        },
-        {
-          onSuccess: (card) => {
-            setStubToast((prev) => (prev && prev.name === name ? { ...prev, cardId: card.id } : prev));
-          },
-          onError: () => {
-            // Creation failed — let them try again next time they type the mention.
-            known.delete(key);
-            setStubToast((prev) => (prev && prev.name === name ? null : prev));
-          },
-        },
-      );
+      setStubToast(name);
       break;
     }
     // detect glossary candidates (!terms the user explicitly marked)
@@ -1320,24 +1344,42 @@ export function EditorPage({
     el.setSelectionRange(start, start + matchLen);
 
     // Programmatic setSelectionRange doesn't reliably auto-scroll in every
-    // browser the way keyboard-driven selection does — nudge scrollTop
-    // toward the matched line manually.
-    const lineNumber = text.slice(0, start).split("\n").length;
-    const lineHeight = parseFloat(getComputedStyle(el).lineHeight || "32") || 32;
-    el.scrollTop = Math.max(0, lineNumber * lineHeight - el.clientHeight / 2);
+    // browser the way keyboard-driven selection does — use the mirror-div
+    // measurement (accounts for soft-wrapped lines) instead of counting
+    // "\n" characters, which was always landing near the top for any
+    // match inside a wrapped paragraph.
+    const top = getTextareaCaretTop(el, start);
+    el.scrollTop = Math.max(0, top - el.clientHeight / 2);
+
+    // Native text-selection color can be too subtle to notice against the
+    // dark theme — flash the textarea border/ring briefly so the jump is
+    // unmistakable even before your eye finds the highlighted text.
+    setJustJumped(true);
+    window.setTimeout(() => setJustJumped(false), 900);
 
     return true;
   };
 
-  const handleStubView = () => {
+  const handleAddStub = () => {
     if (!stubToast) return;
-    // The card was already created when the mention was first typed — just
-    // navigate to it. If the create call is still in flight, cardId will
-    // arrive a moment later via the onSuccess above; guard against that.
-    if (stubToast.cardId) {
-      navigate({ name: "cast", bookId, focusCardId: stubToast.cardId });
-    } else {
-      navigate({ name: "cast", bookId });
+    const name = stubToast;
+    createCardMut.mutate({
+      bookId,
+      input: {
+        category: "character" as const,
+        title: name,
+        x: 200,
+        y: 100,
+      },
+    });
+    // Strip the #...# markers around this mention now that it's captured,
+    // consistent with how !term! markers are cleaned up for glossary adds.
+    const cleaned = text.replace(/#([a-zA-Z][a-zA-Z' -]{0,60}?)#/g, (full, inner: string) =>
+      toTitleCase(inner) === name ? inner.trim() : full,
+    );
+    if (cleaned !== text) {
+      setText(cleaned);
+      commitChapterToStore(cleaned, title);
     }
     setStubToast(null);
   };
@@ -1579,7 +1621,10 @@ export function EditorPage({
               spellCheck
               aria-label="Chapter editor"
               placeholder="Double-click or start typing…"
-              className="min-h-[60vh] w-full resize-none rounded-lg border border-border bg-card p-6 font-serif text-[18px] leading-[1.8] text-zinc-200 placeholder:text-[var(--text-3)] focus:border-accent focus:outline-none"
+              className={cn(
+                "min-h-[60vh] w-full resize-none rounded-lg border bg-card p-6 font-serif text-[18px] leading-[1.8] text-zinc-200 placeholder:text-[var(--text-3)] focus:outline-none selection:bg-amber-400/50 selection:text-zinc-900",
+                justJumped ? "border-amber-400 ring-2 ring-amber-400/60" : "border-border focus:border-accent",
+              )}
             />
             <p className="mt-4 text-center text-xs text-[var(--text-3)]">
               Every save is a draft you can roll back to. Type
@@ -1971,10 +2016,9 @@ export function EditorPage({
 
       {stubToast && (
         <StubToast
-          name={stubToast.name}
-          alreadyTracked={stubToast.alreadyTracked}
+          name={stubToast}
           onDismiss={() => setStubToast(null)}
-          onView={handleStubView}
+          onAdd={handleAddStub}
         />
       )}
 
