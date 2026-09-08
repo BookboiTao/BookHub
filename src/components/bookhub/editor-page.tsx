@@ -173,6 +173,7 @@ type SavedDraft = {
   when: string;
   words: number;
   isMain?: boolean;
+  content: string;
 };
 
 function genHash(): string {
@@ -299,11 +300,13 @@ function DraftHistory({
   search,
   onSearch,
   onDelete,
+  onSelect,
 }: {
   drafts: SavedDraft[];
   search: string;
   onSearch: (s: string) => void;
   onDelete: (id: string) => void;
+  onSelect: (draft: SavedDraft) => void;
 }) {
   const filtered = search.trim()
     ? drafts.filter(
@@ -340,8 +343,17 @@ function DraftHistory({
           filtered.map((d, i) => (
             <div
               key={d.id}
+              onClick={() => onSelect(d)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect(d);
+                }
+              }}
               className={cn(
-                "group rounded-md px-2 py-1.5 text-xs",
+                "group cursor-pointer rounded-md px-2 py-1.5 text-xs transition-colors",
                 d.isMain
                   ? "border border-emerald-500/40 bg-emerald-500/10"
                   : i === 0 && drafts[0]?.id === d.id
@@ -361,7 +373,10 @@ function DraftHistory({
                 </span>
                 <span className="text-[var(--text-3)]">{d.when}</span>
                 <button
-                  onClick={() => onDelete(d.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(d.id);
+                  }}
                   title="Delete draft"
                   className="shrink-0 rounded p-0.5 text-[var(--text-3)] opacity-0 transition-opacity hover:text-rose-400 group-hover:opacity-100"
                 >
@@ -830,19 +845,55 @@ export function EditorPage({
     return () => clearInterval(id);
   }, []);
 
+  // Debounce timer for autosave — prevents a PATCH request on every
+  // keystroke. The text state (setText) updates immediately for UI
+  // responsiveness; this only delays the API call. Fixes "Event handlers
+  // blocked UI updates" warnings from saving on every keystroke.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest text/title captured for the pending save — used by the unmount
+  // cleanup so we can flush immediately without losing the last few keystrokes.
+  const pendingSaveRef = useRef<{ text: string; title: string } | null>(null);
+
   const commitChapterToStore = useCallback(
     (newText: string, newTitle: string) => {
-      updateChapter.mutate({
-        id: chapterId,
-        updates: {
-          content: newText,
-          title: newTitle,
-        },
-      });
-      setLastSavedAt(Date.now());
+      pendingSaveRef.current = { text: newText, title: newTitle };
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => {
+        pendingSaveRef.current = null;
+        updateChapter.mutate({
+          id: chapterId,
+          updates: {
+            content: newText,
+            title: newTitle,
+          },
+        });
+        setLastSavedAt(Date.now());
+      }, 500); // 500ms debounce — saves at most twice per second
     },
     [chapterId, updateChapter],
   );
+
+  // Flush any pending save when the component unmounts (e.g. navigating
+  // to another chapter) so the last few keystrokes aren't lost.
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        const pending = pendingSaveRef.current;
+        if (pending) {
+          pendingSaveRef.current = null;
+          updateChapter.mutate({
+            id: chapterId,
+            updates: {
+              content: pending.text,
+              title: pending.title,
+            },
+          });
+        }
+      }
+    };
+  }, [chapterId, updateChapter]);
 
   /* ----- why modal ----- */
   const [showWhy, setShowWhy] = useState(false);
@@ -863,6 +914,7 @@ export function EditorPage({
         when: formatRelativeTime(d.createdAt),
         words: d.wordCount,
         isMain: d.isMain,
+        content: d.content,
       })),
     [draftsData],
   );
@@ -1641,6 +1693,10 @@ export function EditorPage({
                     search={draftSearch}
                     onSearch={setDraftSearch}
                     onDelete={handleDeleteDraft}
+                    onSelect={(draft) => {
+                      setText(draft.content);
+                      commitChapterToStore(draft.content, title);
+                    }}
                   />
                   <div className="mt-4 flex shrink-0 gap-2 border-t border-border pt-3">
                     <button
