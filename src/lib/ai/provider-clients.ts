@@ -28,6 +28,7 @@ export {
 } from "./provider-catalog";
 
 import { MODEL_CATALOG, ALL_PROVIDER_KEYS, providerForModel, type ProviderKey } from "./provider-catalog";
+import type { ToolDef } from "./tools";
 
 /**
  * Decide which provider/model an AI call should use.
@@ -57,9 +58,21 @@ export function resolveProvider(
   return { model: undefined, provider: withKey ?? "zai" };
 }
 
+export type ToolCallRequest = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
 export type ChatMessage = {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** Set on an assistant message that requested tool calls (needed so the
+   * next request in the loop can reference them correctly per-provider). */
+  toolCalls?: ToolCallRequest[];
+  /** Set on a "tool" role message — which call this is the result of. */
+  toolCallId?: string;
+  toolName?: string;
 };
 
 export type CallShape = {
@@ -67,6 +80,10 @@ export type CallShape = {
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
+  /** If provided, the model may request one of these instead of (or
+   * alongside) replying with plain text. See tools.ts for the read/write
+   * split and why write tools never auto-execute. */
+  tools?: ToolDef[];
 };
 
 export type AIResponse = {
@@ -86,6 +103,9 @@ export type AIResponse = {
    * as a complete reply.
    */
   truncated?: boolean;
+  /** Tool calls the model requested this turn, if any. Empty/undefined
+   * means the model just replied with text — `text` is the final answer. */
+  toolCalls?: ToolCallRequest[];
 };
 
 /* ------------------------------------------------------------------ *
@@ -102,10 +122,43 @@ export async function callZai(
     throw new Error("Z.ai API key is missing. Add it in AI Studio → Providers.");
   }
 
+  // Build the OpenAI-shaped message array. An assistant message that
+  // requested tool calls must carry them in `tool_calls`; a tool-result
+  // message needs `tool_call_id` and no other role fields.
   const messages = [
     ...(shape.system ? [{ role: "system" as const, content: shape.system }] : []),
-    ...shape.messages,
+    ...shape.messages.map((m) => {
+      if (m.role === "tool") {
+        return { role: "tool" as const, tool_call_id: m.toolCallId, content: m.content };
+      }
+      if (m.role === "assistant" && m.toolCalls?.length) {
+        return {
+          role: "assistant" as const,
+          content: m.content || null,
+          tool_calls: m.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+          })),
+        };
+      }
+      return { role: m.role, content: m.content };
+    }),
   ];
+
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: shape.temperature ?? 0.7,
+    max_tokens: shape.maxTokens ?? 4096,
+  };
+  if (shape.tools?.length) {
+    body.tools = shape.tools.map((t) => ({
+      type: "function",
+      function: { name: t.name, description: t.description, parameters: t.parameters },
+    }));
+    body.tool_choice = "auto";
+  }
 
   const res = await fetch("https://api.z.ai/api/paas/v4/chat/completions", {
     method: "POST",
@@ -113,12 +166,7 @@ export async function callZai(
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: shape.temperature ?? 0.7,
-      max_tokens: shape.maxTokens ?? 4096,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -133,9 +181,25 @@ export async function callZai(
   }
 
   const response = await res.json();
-  const text = response?.choices?.[0]?.message?.content ?? "";
+  const message = response?.choices?.[0]?.message;
+  const text: string = message?.content ?? "";
   const usage = response?.usage;
   const finishReason = response?.choices?.[0]?.finish_reason;
+
+  const rawToolCalls = message?.tool_calls as
+    | { id: string; function: { name: string; arguments: string } }[]
+    | undefined;
+  const toolCalls: ToolCallRequest[] | undefined = rawToolCalls?.map((tc) => {
+    let args: Record<string, unknown> = {};
+    try {
+      args = JSON.parse(tc.function.arguments);
+    } catch {
+      // Model returned malformed JSON args — surface as empty args rather
+      // than crashing the whole response; the executor will report the
+      // missing required fields back to the model.
+    }
+    return { id: tc.id, name: tc.function.name, arguments: args };
+  });
 
   return {
     text,
@@ -147,6 +211,7 @@ export async function callZai(
       totalTokens: usage?.total_tokens,
     },
     truncated: finishReason === "length",
+    toolCalls,
   };
 }
 
@@ -163,11 +228,36 @@ export async function callGemini(
     throw new Error("Gemini API key is missing. Add it in AI Studio → Providers.");
   }
 
-  // Gemini uses "model" for the assistant role
-  const contents = shape.messages.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
+  // Gemini's content array: "model" for the assistant role, "user" for
+  // both the human and (per Gemini's documented pattern) tool results —
+  // a tool-result turn is a "user" Content whose part is a functionResponse
+  // rather than text. An assistant turn that requested tools carries a
+  // functionCall part instead of text.
+  const contents = shape.messages.map((m) => {
+    if (m.role === "tool") {
+      return {
+        role: "user" as const,
+        parts: [{
+          functionResponse: {
+            name: m.toolName ?? "unknown",
+            response: { result: m.content },
+          },
+        }],
+      };
+    }
+    if (m.role === "assistant" && m.toolCalls?.length) {
+      return {
+        role: "model" as const,
+        parts: m.toolCalls.map((tc) => ({
+          functionCall: { name: tc.name, args: tc.arguments },
+        })),
+      };
+    }
+    return {
+      role: m.role === "assistant" ? ("model" as const) : ("user" as const),
+      parts: [{ text: m.content }],
+    };
+  });
 
   const body: Record<string, unknown> = {
     contents,
@@ -179,6 +269,16 @@ export async function callGemini(
 
   if (shape.system) {
     body.systemInstruction = { parts: [{ text: shape.system }] };
+  }
+
+  if (shape.tools?.length) {
+    body.tools = [{
+      functionDeclarations: shape.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        parameters: toGeminiSchema(t.parameters),
+      })),
+    }];
   }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -201,9 +301,22 @@ export async function callGemini(
   }
 
   const data = await res.json();
-  const text: string = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).filter(Boolean).join("\n") ?? "";
+  const parts: { text?: string; functionCall?: { name: string; args: Record<string, unknown> } }[] =
+    data?.candidates?.[0]?.content?.parts ?? [];
+  const text = parts.map((p) => p.text).filter(Boolean).join("\n");
   const usageMeta = data?.usageMetadata;
   const finishReason = data?.candidates?.[0]?.finishReason;
+
+  const functionCallParts = parts.filter((p) => p.functionCall);
+  const toolCalls: ToolCallRequest[] | undefined = functionCallParts.length > 0
+    ? functionCallParts.map((p, i) => ({
+        // Gemini doesn't hand back a call id — synthesize one so the loop
+        // can still address individual results.
+        id: `gemini-call-${Date.now()}-${i}`,
+        name: p.functionCall!.name,
+        arguments: p.functionCall!.args ?? {},
+      }))
+    : undefined;
 
   return {
     text,
@@ -215,6 +328,28 @@ export async function callGemini(
       totalTokens: usageMeta?.totalTokenCount,
     },
     truncated: finishReason === "MAX_TOKENS",
+    toolCalls,
+  };
+}
+
+/** Gemini's Schema object requires UPPERCASE type names (STRING, OBJECT,
+ * ARRAY...) unlike the lowercase JSON-Schema-style types tools.ts uses
+ * everywhere else — this is the one adapter point for that difference. */
+export function toGeminiSchema(params: ToolDef["parameters"]): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  for (const [key, p] of Object.entries(params.properties)) {
+    const entry: Record<string, unknown> = {
+      type: p.type.toUpperCase(),
+      description: p.description,
+    };
+    if (p.enum) entry.enum = p.enum;
+    if (p.items) entry.items = { type: p.items.type.toUpperCase() };
+    properties[key] = entry;
+  }
+  return {
+    type: "OBJECT",
+    properties,
+    required: params.required,
   };
 }
 

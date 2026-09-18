@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser, createSupabaseServer } from "@/lib/supabase-server";
-import { callAI, resolveProvider, MODEL_CATALOG, type ProviderKey } from "@/lib/ai/provider-clients";
+import { callAI, resolveProvider, MODEL_CATALOG, type ProviderKey, type ChatMessage, type ToolCallRequest } from "@/lib/ai/provider-clients";
 import { buildMessages, getAISettings, type Scope } from "@/lib/ai/context-builder";
 import { checkProse } from "@/lib/ai/guard";
 import { classifyAiError } from "@/lib/ai/provider-catalog";
+import { TOOLS, isReadTool, isWriteTool } from "@/lib/ai/tools";
+import { executeReadTool } from "@/lib/ai/tool-executors";
 import { z } from "zod";
 
 const chatSchema = z.object({
@@ -64,7 +66,8 @@ export async function POST(req: NextRequest) {
   } as Scope;
 
   // Assemble context + messages
-  const { system, messages: fullMessages, contextLayers, constitution } = await buildMessages(scope, messages);
+  const { system: baseSystem, messages: fullMessages, contextLayers, constitution } = await buildMessages(scope, messages);
+  const system = `${baseSystem}\n\nYou have tools to look up and propose changes to this book's World Bible: search_bible, get_card, create_card, update_card, create_link. Use search_bible or get_card whenever you need a real fact instead of guessing — never state something about a character or place you haven't actually looked up. create_card, update_card, and create_link do NOT take effect immediately: calling one queues a proposal the person must explicitly approve, so it's safe to propose something and explain your reasoning in the same reply. Never claim in plain text that you created, updated, or linked something — if you mean to do that, call the tool; the person can only tell what you actually did from whether a tool was called, not from what you say you did.`;
 
   // Consult the router for the model to use for chat
   const settings = await getAISettings(bookId);
@@ -92,29 +95,91 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Call the AI
+  // Call the AI, looping while it requests read-only tools (search_bible,
+  // get_card) so it can gather real facts before answering. A write tool
+  // request (create_card, update_card, create_link) stops the loop
+  // immediately — those never execute here, they come back as
+  // pendingActions for the person to approve, same as everything else in
+  // this app. Capped so a confused model can't loop forever on your bill.
+  const MAX_ITERATIONS = 4;
+  const loopMessages: ChatMessage[] = fullMessages.map((m) => ({ role: m.role, content: m.content }));
+  const pendingActions: Record<string, unknown>[] = [];
+  const toolTrace: { name: string; arguments: Record<string, unknown> }[] = [];
+
   try {
-    const response = await callAI(
-      {
-        system,
-        messages: fullMessages,
-        temperature: 0.7,
-        maxTokens: 4096,
-      },
-      { model: resolvedModel, provider: resolvedProvider, apiKeys },
-    );
+    let finalResponse: Awaited<ReturnType<typeof callAI>> | null = null;
+
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
+      const response = await callAI(
+        {
+          system,
+          messages: loopMessages,
+          temperature: 0.7,
+          maxTokens: 4096,
+          tools: TOOLS,
+        },
+        { model: resolvedModel, provider: resolvedProvider, apiKeys },
+      );
+
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        finalResponse = response;
+        break;
+      }
+
+      const writeCalls = response.toolCalls.filter((tc) => isWriteTool(tc.name));
+      const readCalls = response.toolCalls.filter((tc) => isReadTool(tc.name));
+
+      for (const tc of response.toolCalls) toolTrace.push({ name: tc.name, arguments: tc.arguments });
+
+      if (writeCalls.length > 0) {
+        // Stop here — format each write call as a proposal and return
+        // whatever text came with it (if any). Never execute.
+        for (const tc of writeCalls) {
+          pendingActions.push(toPendingAction(tc));
+        }
+        finalResponse = response;
+        break;
+      }
+
+      // All read tools — execute them for real, feed results back, and
+      // let the model keep reasoning in the next iteration.
+      loopMessages.push({
+        role: "assistant",
+        content: response.text,
+        toolCalls: response.toolCalls,
+      });
+      for (const tc of readCalls) {
+        const result = await executeReadTool(tc.name, tc.arguments, bookId);
+        loopMessages.push({
+          role: "tool",
+          content: result,
+          toolCallId: tc.id,
+          toolName: tc.name,
+        });
+      }
+
+      if (i === MAX_ITERATIONS - 1) {
+        finalResponse = response;
+      }
+    }
+
+    if (!finalResponse) {
+      throw new Error("The AI didn't return a response.");
+    }
 
     // Run guard on AI output
-    const violations = checkProse(response.text, constitution);
+    const violations = checkProse(finalResponse.text, constitution);
 
     return NextResponse.json({
-      text: response.text,
+      text: finalResponse.text,
+      pendingActions: pendingActions.length > 0 ? pendingActions : undefined,
       meta: {
-        provider: response.provider,
-        model: response.model,
-        usage: response.usage,
+        provider: finalResponse.provider,
+        model: finalResponse.model,
+        usage: finalResponse.usage,
         contextLayers,
-        truncated: response.truncated ?? false,
+        truncated: finalResponse.truncated ?? false,
+        toolsUsed: toolTrace.length > 0 ? toolTrace : undefined,
       },
       guard: violations.length > 0 ? violations : undefined,
     });
@@ -130,4 +195,39 @@ export async function POST(req: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+/** Shape a model's write-tool request into the same format the client's
+ * existing create/update endpoints already accept — so "Apply" on a
+ * pending action is just a normal fetch to a normal route, nothing new. */
+function toPendingAction(tc: ToolCallRequest): Record<string, unknown> {
+  const a = tc.arguments;
+  if (tc.name === "create_card") {
+    return {
+      kind: "create_card",
+      category: a.category,
+      title: a.title,
+      summary: a.summary ?? "",
+      body: a.body ?? "",
+      tags: Array.isArray(a.tags) ? a.tags : [],
+    };
+  }
+  if (tc.name === "update_card") {
+    return {
+      kind: "update_card",
+      cardId: a.cardId,
+      title: a.title,
+      summary: a.summary,
+      body: a.body,
+    };
+  }
+  if (tc.name === "create_link") {
+    return {
+      kind: "create_link",
+      fromCardId: a.fromCardId,
+      toCardId: a.toCardId,
+      label: a.label,
+    };
+  }
+  return { kind: "unknown", raw: tc };
 }

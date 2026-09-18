@@ -20,6 +20,7 @@ type ChatMessage = {
   content: string;
   guard?: { rule: string; severity: string; quote: string; suggestion: string }[];
   truncated?: boolean;
+  pendingActions?: Record<string, unknown>[];
 };
 
 export function useAiDock() {
@@ -133,7 +134,7 @@ export function AiDock({
       const data = await res.json();
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: data.text, guard: data.guard, truncated: data.meta?.truncated },
+        { role: "assistant", content: data.text, guard: data.guard, truncated: data.meta?.truncated, pendingActions: data.pendingActions },
       ]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
@@ -255,6 +256,69 @@ export function AiDock({
     }
   }
 
+  // Tracks which pending actions (by messageIndex-actionIndex) have already
+  // been applied or discarded, so re-rendering the same message doesn't
+  // show a button for something already handled.
+  const [handledActions, setHandledActions] = useState<Set<string>>(new Set());
+  const [applyingKey, setApplyingKey] = useState<string | null>(null);
+
+  async function handleApplyAction(action: Record<string, unknown>, key: string) {
+    if (!scopeData?.bookId) return;
+    setApplyingKey(key);
+    try {
+      if (action.kind === "create_card") {
+        const res = await fetch(`/api/books/${scopeData.bookId}/cards`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            category: action.category,
+            title: action.title,
+            summary: action.summary ?? "",
+            body: action.body ?? "",
+            canonStatus: "draft",
+            tags: action.tags ?? [],
+            fields: [],
+          }),
+        });
+        if (!res.ok) throw new Error(`Create failed: HTTP ${res.status}`);
+      } else if (action.kind === "update_card") {
+        const updates: Record<string, unknown> = {};
+        if (action.title !== undefined) updates.title = action.title;
+        if (action.summary !== undefined) updates.summary = action.summary;
+        if (action.body !== undefined) updates.body = action.body;
+        const res = await fetch(`/api/cards/${action.cardId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        });
+        if (!res.ok) throw new Error(`Update failed: HTTP ${res.status}`);
+      } else if (action.kind === "create_link") {
+        const res = await fetch(`/api/books/${scopeData.bookId}/links`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fromCardId: action.fromCardId,
+            toCardId: action.toCardId,
+            label: action.label,
+          }),
+        });
+        if (!res.ok) throw new Error(`Link failed: HTTP ${res.status}`);
+      }
+      setHandledActions((prev) => new Set([...prev, key]));
+    } catch (err) {
+      setError({ message: err instanceof Error ? err.message : "Failed to apply", kind: "unknown" });
+    } finally {
+      setApplyingKey(null);
+    }
+  }
+
+  function describeAction(action: Record<string, unknown>): string {
+    if (action.kind === "create_card") return `Create "${action.title}" (${action.category})`;
+    if (action.kind === "update_card") return `Edit article: ${[action.title && "title", action.summary && "summary", action.body && "body"].filter(Boolean).join(", ")}`;
+    if (action.kind === "create_link") return `Link two articles${action.label ? ` (${action.label})` : ""}`;
+    return "Unknown action";
+  }
+
   if (!open) return null;
 
   const hasMessages = messages.length > 0;
@@ -306,7 +370,9 @@ export function AiDock({
             <p className="text-sm font-medium text-foreground">AI Chat</p>
             <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-2)]">
               Ask questions, brainstorm, or check consistency.
-              The AI can see your world cards and rules.
+              The AI can look up real cards in your World Bible and
+              propose new ones or edits — nothing changes until you
+              tap Apply.
             </p>
             {/* Brainstorm button (only on tab scope) */}
             {scopeData?.tab && (
@@ -406,6 +472,35 @@ export function AiDock({
                       {g.rule}: {g.quote}
                     </div>
                   ))}
+                </div>
+              )}
+              {msg.pendingActions && msg.pendingActions.length > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  {msg.pendingActions.map((action, ai) => {
+                    const key = `${i}-${ai}`;
+                    const applied = handledActions.has(key);
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/5 px-2.5 py-2"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">
+                          {describeAction(action)}
+                        </span>
+                        {applied ? (
+                          <span className="shrink-0 text-[10px] text-emerald-400">Applied</span>
+                        ) : (
+                          <button
+                            onClick={() => handleApplyAction(action, key)}
+                            disabled={applyingKey === key}
+                            className="shrink-0 rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-accent-foreground hover:bg-accent/90 disabled:opacity-50"
+                          >
+                            {applyingKey === key ? "Applying…" : "Apply"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
