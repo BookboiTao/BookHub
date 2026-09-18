@@ -197,8 +197,7 @@ export async function buildBookContext(scope: Scope, opts?: { structuredOutput?:
 
     if (chapter) {
       const prose = chapter.content || "";
-      const lastWords = prose.length > 1500 ? prose.slice(-1500) : prose;
-      scopeContext = `CURRENT CHAPTER: Ch.${(chapter.sort_order ?? 0) + 1} — ${chapter.title}\n\nLast ~1500 chars of prose:\n${lastWords}\n`;
+      scopeContext = `CURRENT CHAPTER: Ch.${(chapter.sort_order ?? 0) + 1} — ${chapter.title}\n\nFull chapter text:\n${prose}\n`;
     }
 
     // Chapter state (the previous chapter's state, if any)
@@ -333,9 +332,13 @@ export async function buildBookContext(scope: Scope, opts?: { structuredOutput?:
 
   // --- Budget management: truncate if over limit ---
   if (totalChars > MAX_CONTEXT_CHARS) {
-    // Drop card bodies to summaries if over budget
-    scopeContext = scopeContext.slice(0, MAX_CONTEXT_CHARS - systemPrompt.length - worldSummary.length - 500);
-    layers.push("(truncated to budget)");
+    // Keep the TAIL, not the head, when trimming. For a chapter this is
+    // "what I most recently wrote" (what continuation needs); for a card
+    // list it's usually the most-recently-touched entries. Losing the
+    // oldest context is a better default than losing the newest.
+    const budget = MAX_CONTEXT_CHARS - systemPrompt.length - worldSummary.length - 500;
+    scopeContext = budget > 0 ? scopeContext.slice(-budget) : "";
+    layers.push("(truncated to budget — kept the most recent part)");
     totalChars = systemPrompt.length + worldSummary.length + scopeContext.length;
   }
 

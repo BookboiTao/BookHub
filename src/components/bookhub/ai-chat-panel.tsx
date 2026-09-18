@@ -63,6 +63,14 @@ export function AiChatPanel({
   const [error, setError] = useState<AiErrorInfo | null>(null);
   const [lastChatText, setLastChatText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grows the textarea to fit its content, up to the CSS max-height cap
+  // (where it starts scrolling instead).
+  function autoGrow(el: HTMLTextAreaElement) {
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -78,6 +86,7 @@ export function AiChatPanel({
     const userMsg: ChatMessage = { role: "user", content: text };
     setMessages((prev: ChatMessage[]) => [...prev, userMsg]);
     setInput("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
     setLoading(true);
     setError(null);
     setLastChatText(text);
@@ -423,25 +432,30 @@ export function AiChatPanel({
 
       {/* input */}
       <div className="shrink-0 border-t border-border p-3">
-        <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
-          <input
-            type="text"
+        <div className="flex items-end gap-2 rounded-md border border-border bg-background px-3 py-2">
+          <textarea
+            ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              autoGrow(e.target);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();
               }
             }}
-            placeholder="Ask about your story…"
+            placeholder="Ask about your story… (Shift+Enter for a new line)"
             disabled={loading}
-            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-[var(--text-3)] focus:outline-none disabled:opacity-50"
+            rows={1}
+            spellCheck
+            className="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent text-sm text-foreground placeholder:text-[var(--text-3)] focus:outline-none disabled:opacity-50"
           />
           <button
             onClick={handleSend}
             disabled={loading || !input.trim()}
-            className="text-[var(--text-3)] hover:text-foreground disabled:opacity-30"
+            className="shrink-0 pb-0.5 text-[var(--text-3)] hover:text-foreground disabled:opacity-30"
           >
             <Send className="h-3.5 w-3.5" />
           </button>

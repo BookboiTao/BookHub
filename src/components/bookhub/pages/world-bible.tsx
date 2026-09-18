@@ -619,6 +619,7 @@ function WikiArticle({ bookId, tab, focusCardId }: WikiPageProps) {
         <input
           value={card.title}
           onChange={(e) => handleCardChange({ ...card, title: e.target.value })}
+          spellCheck
           className="mb-1 w-full bg-transparent font-serif text-3xl font-semibold text-foreground focus:outline-none"
         />
         <div className="mb-5 flex w-fit items-center gap-1 rounded-md border border-border p-0.5">
@@ -643,6 +644,7 @@ function WikiArticle({ bookId, tab, focusCardId }: WikiPageProps) {
           onChange={(e) => handleCardChange({ ...card, summary: e.target.value })}
           placeholder="One-line summary…"
           rows={2}
+          spellCheck
           className="mb-5 w-full resize-none bg-transparent text-sm italic text-[var(--text-2)] focus:outline-none"
         />
 
@@ -651,6 +653,7 @@ function WikiArticle({ bookId, tab, focusCardId }: WikiPageProps) {
           onChange={(e) => handleCardChange({ ...card, body: e.target.value })}
           placeholder="Write the article…"
           rows={10}
+          spellCheck
           className="mb-8 w-full resize-y rounded-md border border-transparent bg-transparent px-3 py-2 text-sm leading-relaxed text-foreground transition-colors focus:border-border focus:bg-[var(--surface-2)] focus:outline-none"
         />
 
