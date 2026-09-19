@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { Bot, X, Send, Loader2, Sparkles, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-banner";
-import { ApplyButton, NotSavedYetHint } from "@/components/bookhub/proposed-action-button";
+import { ApplyButton, NotSavedYetHint, FieldDiff } from "@/components/bookhub/proposed-action-button";
 import { describeProposedAction, type ProposedAction } from "@/lib/ai/proposed-actions";
 
 /* ------------------------------------------------------------------ *
@@ -414,23 +414,43 @@ export function AiDock({
                   {msg.pendingActions.map((action, ai) => {
                     const key = `${i}-${ai}`;
                     const applied = handledActions.has(key);
+                    const hasDiff = action.kind === "update_card" && (
+                      (action.title !== undefined && action.oldTitle !== undefined) ||
+                      (action.summary !== undefined && action.oldSummary !== undefined) ||
+                      (action.body !== undefined && action.oldBody !== undefined)
+                    );
                     return (
                       <div
                         key={key}
-                        className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/5 px-2.5 py-2"
+                        className="rounded-md border border-accent/30 bg-accent/5 px-2.5 py-2"
                       >
-                        <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">
+                        <div className="mb-1 text-[11px] font-medium text-foreground">
                           {describeProposedAction(action)}
-                        </span>
-                        {!applied && <NotSavedYetHint />}
-                        {scopeData?.bookId && (
-                          <ApplyButton
-                            bookId={scopeData.bookId}
-                            action={action}
-                            onApplied={() => setHandledActions((prev) => new Set([...prev, key]))}
-                            onError={(msg) => setError({ message: msg, kind: "unknown" })}
-                          />
+                        </div>
+                        {hasDiff && action.kind === "update_card" && (
+                          <div className="mb-2 space-y-1.5 rounded-md bg-background/60 p-2">
+                            {action.title !== undefined && action.oldTitle !== undefined && action.oldTitle !== action.title && (
+                              <FieldDiff label="Title" oldValue={action.oldTitle} newValue={action.title} />
+                            )}
+                            {action.summary !== undefined && action.oldSummary !== undefined && action.oldSummary !== action.summary && (
+                              <FieldDiff label="Summary" oldValue={action.oldSummary} newValue={action.summary} />
+                            )}
+                            {action.body !== undefined && action.oldBody !== undefined && action.oldBody !== action.body && (
+                              <FieldDiff label="Body" oldValue={action.oldBody} newValue={action.body} />
+                            )}
+                          </div>
                         )}
+                        <div className="flex items-center justify-between gap-2">
+                          {!applied && <NotSavedYetHint />}
+                          {scopeData?.bookId && (
+                            <ApplyButton
+                              bookId={scopeData.bookId}
+                              action={action}
+                              onApplied={() => setHandledActions((prev) => new Set([...prev, key]))}
+                              onError={(msg) => setError({ message: msg, kind: "unknown" })}
+                            />
+                          )}
+                        </div>
                       </div>
                     );
                   })}

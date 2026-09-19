@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
         // Stop here — format each write call as a proposal and return
         // whatever text came with it (if any). Never execute.
         for (const tc of writeCalls) {
-          pendingActions.push(toPendingAction(tc));
+          pendingActions.push(await toPendingAction(tc, bookId));
         }
         finalResponse = response;
         break;
@@ -200,7 +200,7 @@ export async function POST(req: NextRequest) {
 /** Shape a model's write-tool request into the same format the client's
  * existing create/update endpoints already accept — so "Apply" on a
  * pending action is just a normal fetch to a normal route, nothing new. */
-function toPendingAction(tc: ToolCallRequest): Record<string, unknown> {
+async function toPendingAction(tc: ToolCallRequest, bookId: string): Promise<Record<string, unknown>> {
   const a = tc.arguments;
   if (tc.name === "create_card") {
     return {
@@ -213,12 +213,32 @@ function toPendingAction(tc: ToolCallRequest): Record<string, unknown> {
     };
   }
   if (tc.name === "update_card") {
+    // Fetch the card's CURRENT values so the client can show a real
+    // before/after diff instead of applying a proposal blind. If the
+    // card was deleted since the model looked it up, old* is just
+    // omitted — the diff view falls back to showing only the new value.
+    let old: { title?: string; summary?: string; body?: string } = {};
+    try {
+      const supabase = await createSupabaseServer();
+      const { data } = await supabase
+        .from("cards")
+        .select("title, summary, body")
+        .eq("id", String(a.cardId ?? ""))
+        .eq("book_id", bookId)
+        .maybeSingle();
+      if (data) old = { title: data.title, summary: data.summary, body: data.body };
+    } catch {
+      // Non-fatal — proposal still renders, just without the old-value diff.
+    }
     return {
       kind: "update_card",
       cardId: a.cardId,
       title: a.title,
       summary: a.summary,
       body: a.body,
+      oldTitle: old.title,
+      oldSummary: old.summary,
+      oldBody: old.body,
     };
   }
   if (tc.name === "create_link") {

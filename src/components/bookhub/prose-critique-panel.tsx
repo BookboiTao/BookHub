@@ -1,27 +1,27 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, Loader2, ShieldCheck, Wand2, SpellCheck2 } from "lucide-react";
+import { Sparkles, Loader2, ShieldCheck, Wand2, SpellCheck2, Check, X } from "lucide-react";
 import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-banner";
 
 /* ------------------------------------------------------------------ *
  * ProseCritiquePanel — the manual "check my own prose" tool.
  *
- * guard.ts's own header comment claims checkProse is "available as a
- * button in the editor Tools tab" — until this component, it wasn't:
- * checkProse only ever ran automatically on AI-generated text. This is
- * the first place a writer can run the constitution against their OWN
- * typed prose, on demand.
- *
- * Two passes, shown separately on purpose:
+ * Three passes, shown separately on purpose:
  *   - "Mechanical" = guard.ts's code-enforced rules, run instantly,
- *     deterministic, no AI call.
+ *     deterministic, no AI call. Its "suggestion" field is GENERAL
+ *     GUIDANCE ("cut them, keep one only where...") — never a literal
+ *     replacement, so these are jump-to-passage only, never an Accept
+ *     button. Applying "cut them, keep one only where..." as literal
+ *     replacement text would silently corrupt the chapter.
  *   - "AI critique" = the model applying the full constitution as a
- *     rubric (rules 28-31 govern ITS behavior while critiquing:
- *     proportional fixes, no invented details, no over-flagging).
- * Kept separate rather than merged so it's visible which findings are
- * deterministic and which are judgment calls — never auto-applied,
- * this only ever surfaces findings for the writer to act on or ignore.
+ *     rubric (rules 28-31 govern its behavior: proportional fixes, no
+ *     invented details, no over-flagging). Its "suggestion" field IS
+ *     meant as a literal fix per that prompt's own instructions, so
+ *     this is the one group that gets a real before/after diff and an
+ *     Accept button — this is the actual accept/reject mechanism.
+ *   - "Grammar" = HALPE Core, dormant until deployed. Same jump-only
+ *     treatment as Mechanical for now.
  * ------------------------------------------------------------------ */
 
 type Finding = { rule: string; severity: "error" | "warning"; quote: string; suggestion: string };
@@ -31,6 +31,7 @@ export function ProseCritiquePanel({
   chapterId,
   text,
   onJumpToQuote,
+  onApplyFix,
 }: {
   bookId: string;
   chapterId: string;
@@ -39,6 +40,11 @@ export function ProseCritiquePanel({
    *  Returns false if the quote can no longer be found (text changed
    *  since the check ran). */
   onJumpToQuote: (quote: string) => boolean;
+  /** Replaces a finding's exact quoted text with its suggestion in the
+   *  live chapter text. Only ever called for AI-critique findings, whose
+   *  suggestion field is genuinely meant as replacement prose. Returns
+   *  false (applies nothing) if the quote can't be found anymore. */
+  onApplyFix: (quote: string, suggestion: string) => boolean;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AiErrorInfo | null>(null);
@@ -94,7 +100,7 @@ export function ProseCritiquePanel({
         <span className="text-xs font-semibold">Check my prose</span>
       </div>
       <p className="mb-3 text-[11px] leading-relaxed text-[var(--text-2)]">
-        Runs your own draft against the Constitution — mechanical checks instantly, plus an AI critique pass. Read-only findings; nothing here edits your text.
+        Runs your own draft against the Constitution — mechanical checks instantly, plus an AI critique pass. AI-critique fixes can be accepted directly; mechanical/grammar findings are jump-to-passage only, since their notes are guidance, not literal rewrites.
       </p>
 
       {error && (
@@ -131,17 +137,18 @@ export function ProseCritiquePanel({
           ) : (
             <>
               <FindingGroup
-                icon={<ShieldCheck className="h-3 w-3" />}
-                label="Mechanical"
-                hint="deterministic, no AI call"
-                findings={guardFindings ?? []}
-                onJumpToQuote={onJumpToQuote}
-              />
-              <FindingGroup
                 icon={<Sparkles className="h-3 w-3" />}
                 label="AI critique"
-                hint="judgment calls, rules 28-31"
+                hint="rules 28-31 — accept a fix or dismiss"
                 findings={aiFindings ?? []}
+                onJumpToQuote={onJumpToQuote}
+                onApplyFix={onApplyFix}
+              />
+              <FindingGroup
+                icon={<ShieldCheck className="h-3 w-3" />}
+                label="Mechanical"
+                hint="deterministic, no AI call — guidance, not a literal fix"
+                findings={guardFindings ?? []}
                 onJumpToQuote={onJumpToQuote}
               />
               <FindingGroup
@@ -165,20 +172,46 @@ function FindingGroup({
   hint,
   findings,
   onJumpToQuote,
+  onApplyFix,
 }: {
   icon: React.ReactNode;
   label: string;
   hint: string;
   findings: Finding[];
   onJumpToQuote: (quote: string) => boolean;
+  /** Presence of this prop is what turns on the Accept/diff UI for this
+   * group — omit it (Mechanical, Grammar) to get jump-only behavior. */
+  onApplyFix?: (quote: string, suggestion: string) => boolean;
 }) {
   const [missingIndex, setMissingIndex] = useState<number | null>(null);
+  const [handledIndices, setHandledIndices] = useState<Set<number>>(new Set());
+  const [appliedIndices, setAppliedIndices] = useState<Set<number>>(new Set());
 
-  if (findings.length === 0) return null;
+  const visible = findings.filter((_, i) => !handledIndices.has(i));
+  if (visible.length === 0) return null;
 
   function handleClick(i: number, quote: string) {
     const found = onJumpToQuote(quote);
     setMissingIndex(found ? null : i);
+  }
+
+  function handleAccept(i: number, f: Finding) {
+    if (!onApplyFix) return;
+    const applied = onApplyFix(f.quote, f.suggestion);
+    if (applied) {
+      setAppliedIndices((prev) => new Set([...prev, i]));
+      // Leave it visible with an "Applied" state briefly rather than
+      // yanking it away instantly — same pattern as ApplyButton elsewhere.
+      window.setTimeout(() => {
+        setHandledIndices((prev) => new Set([...prev, i]));
+      }, 900);
+    } else {
+      setMissingIndex(i);
+    }
+  }
+
+  function handleDismiss(i: number) {
+    setHandledIndices((prev) => new Set([...prev, i]));
   }
 
   return (
@@ -189,29 +222,85 @@ function FindingGroup({
         <span className="font-normal normal-case text-[var(--text-3)]">— {hint}</span>
       </div>
       <div className="space-y-1.5">
-        {findings.map((f, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => handleClick(i, f.quote)}
-            title="Jump to this passage in the editor"
-            className={
-              "w-full rounded-md border p-2 text-left text-[11px] transition-colors hover:border-accent/50 " +
-              (f.severity === "error"
-                ? "border-red-500/30 bg-red-500/5"
-                : "border-border bg-[var(--surface-2)]")
-            }
-          >
-            <div className="mb-0.5 font-medium text-foreground">{f.rule}</div>
-            <div className="mb-1 text-[var(--text-2)]">&quot;{f.quote}&quot;</div>
-            <div className="text-[var(--text-3)]">{f.suggestion}</div>
-            {missingIndex === i && (
-              <div className="mt-1 text-[10px] text-amber-400">
-                Couldn&apos;t find this passage — the text may have changed since this check ran.
+        {findings.map((f, i) => {
+          if (handledIndices.has(i) && !appliedIndices.has(i)) return null;
+          const applied = appliedIndices.has(i);
+          return (
+            <div
+              key={i}
+              className={
+                "rounded-md border p-2 text-[11px] transition-colors " +
+                (f.severity === "error"
+                  ? "border-red-500/30 bg-red-500/5"
+                  : "border-border bg-[var(--surface-2)]")
+              }
+            >
+              <div className="mb-0.5 font-medium text-foreground">{f.rule}</div>
+
+              {onApplyFix ? (
+                // Real before/after diff for AI-critique findings, since
+                // their suggestion field is genuinely meant as a fix.
+                <div className="mb-1.5 space-y-1">
+                  <div className="flex gap-1.5">
+                    <span className="shrink-0 font-mono text-[9px] text-red-400">−</span>
+                    <span className="text-[var(--text-2)] line-through decoration-red-400/50">{f.quote}</span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <span className="shrink-0 font-mono text-[9px] text-emerald-400">+</span>
+                    <span className="text-foreground">{f.suggestion}</span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="mb-1 text-[var(--text-2)]">&quot;{f.quote}&quot;</div>
+                  <div className="mb-1.5 text-[var(--text-3)]">{f.suggestion}</div>
+                </>
+              )}
+
+              {missingIndex === i && (
+                <div className="mb-1.5 text-[10px] text-amber-400">
+                  Couldn&apos;t find this passage — the text may have changed since this check ran.
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleClick(i, f.quote)}
+                  className="text-[10px] text-[var(--text-3)] hover:text-foreground hover:underline"
+                >
+                  Jump to passage
+                </button>
+                {onApplyFix && (
+                  <>
+                    <span className="text-[var(--text-3)]">·</span>
+                    {applied ? (
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-400">
+                        <Check className="h-2.5 w-2.5" /> Applied
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleAccept(i, f)}
+                        className="flex items-center gap-1 text-[10px] font-medium text-accent hover:underline"
+                      >
+                        <Check className="h-2.5 w-2.5" /> Accept fix
+                      </button>
+                    )}
+                  </>
+                )}
+                <span className="text-[var(--text-3)]">·</span>
+                <button
+                  type="button"
+                  onClick={() => handleDismiss(i)}
+                  className="flex items-center gap-1 text-[10px] text-[var(--text-3)] hover:text-foreground"
+                >
+                  <X className="h-2.5 w-2.5" /> Dismiss
+                </button>
               </div>
-            )}
-          </button>
-        ))}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

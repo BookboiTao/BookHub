@@ -23,6 +23,27 @@ export function NotSavedYetHint() {
   );
 }
 
+/** A single-field before/after diff line — the real "here's what will
+ * actually change" view for an update_card proposal, instead of applying
+ * an edit blind. Truncates long values so one changed field doesn't
+ * swallow the whole card. */
+export function FieldDiff({ label, oldValue, newValue }: { label: string; oldValue: string; newValue: string }) {
+  const truncate = (s: string) => (s.length > 140 ? `${s.slice(0, 140)}…` : s);
+  return (
+    <div className="text-[10px]">
+      <div className="mb-0.5 font-medium uppercase tracking-wide text-[var(--text-3)]">{label}</div>
+      <div className="flex gap-1.5">
+        <span className="shrink-0 font-mono text-red-400">−</span>
+        <span className="text-[var(--text-2)] line-through decoration-red-400/50">{truncate(oldValue) || "(empty)"}</span>
+      </div>
+      <div className="flex gap-1.5">
+        <span className="shrink-0 font-mono text-emerald-400">+</span>
+        <span className="text-foreground">{truncate(newValue) || "(empty)"}</span>
+      </div>
+    </div>
+  );
+}
+
 export function ApplyButton({
   bookId,
   action,

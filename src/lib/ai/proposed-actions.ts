@@ -10,7 +10,20 @@
 
 export type ProposedAction =
   | { kind: "create_card"; category: string; title: string; summary?: string; body?: string; tags?: string[] }
-  | { kind: "update_card"; cardId: string; title?: string; summary?: string; body?: string }
+  | {
+      kind: "update_card";
+      cardId: string;
+      title?: string;
+      summary?: string;
+      body?: string;
+      /** Current values, fetched server-side when the proposal was built —
+       * purely for showing a real before/after diff before Apply. Absent
+       * means "couldn't fetch the old value" (e.g. card deleted since);
+       * the diff view falls back to just showing the proposed new value. */
+      oldTitle?: string;
+      oldSummary?: string;
+      oldBody?: string;
+    }
   | { kind: "create_link"; fromCardId: string; toCardId: string; label?: string };
 
 export type ApplyResult = { ok: true; id?: string } | { ok: false; error: string };

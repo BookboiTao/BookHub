@@ -1360,6 +1360,27 @@ export function EditorPage({
     return true;
   };
 
+  // Applies one AI-critique fix by replacing its exact quoted text with
+  // the suggested replacement — only safe for findings whose "suggestion"
+  // is genuinely meant as literal replacement text (the AI critique pass,
+  // per its own prompt instructions). Mechanical guard findings write
+  // general guidance in that field ("cut them, keep one only where..."),
+  // NOT replacement text, so this is never wired to those — doing so
+  // would silently corrupt the chapter with instructional prose instead
+  // of prose. Returns false (and applies nothing) if the quote can't be
+  // found, same "text changed since the check ran" case as jump-to-quote.
+  const handleApplyFix = (quote: string, suggestion: string): boolean => {
+    const clean = quote.trim();
+    if (!clean) return false;
+    const start = text.indexOf(clean);
+    if (start === -1) return false;
+
+    const newText = text.slice(0, start) + suggestion + text.slice(start + clean.length);
+    setText(newText);
+    commitChapterToStore(newText, title);
+    return true;
+  };
+
   const handleAddStub = () => {
     if (!stubToast) return;
     const name = stubToast;
@@ -1854,7 +1875,7 @@ export function EditorPage({
                   {/* manual "check my prose" — the gap guard.ts's own
                       comment claimed was already covered but wasn't;
                       checks what YOU wrote, not just AI output */}
-                  <ProseCritiquePanel bookId={bookId} chapterId={chapterId} text={text} onJumpToQuote={handleJumpToQuote} />
+                  <ProseCritiquePanel bookId={bookId} chapterId={chapterId} text={text} onJumpToQuote={handleJumpToQuote} onApplyFix={handleApplyFix} />
 
                   {/* crutch word panel — uses the imported CrutchWordPanel.
                    * The component is built as an absolute-positioned popover
