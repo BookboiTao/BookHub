@@ -7,7 +7,6 @@ import {
   Bot,
   Loader2,
   Sparkles,
-  ArrowRight,
   X,
   Check,
   AlertTriangle,
@@ -17,6 +16,8 @@ import {
 import { useBook, useUpdateBook, LoadingSpinner } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-banner";
+import { ApplyButton, NotSavedYetHint } from "@/components/bookhub/proposed-action-button";
+import { applyProposedAction } from "@/lib/ai/proposed-actions";
 
 /* ------------------------------------------------------------------ *
  * WorkShop — the incubator.
@@ -339,45 +340,6 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
     }
   }
 
-  async function handleSendToTab(entity: ExtractedEntity, index: number) {
-    try {
-      const res = await fetch(`/api/books/${bookId}/cards`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          category: normalizeCategory(entity.category),
-          title: entity.title,
-          summary: entity.summary,
-          body: entity.body,
-          canonStatus: "draft",
-          tags: entity.tags ?? [],
-          fields: [],
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        // Leave the entity in the list on failure — silently removing it
-        // here was the actual bug: it looked like every entity had been
-        // sent even when the create call failed, with the card never
-        // actually created.
-        setError({ message: `Couldn't send "${entity.title}": ${err.error ?? `HTTP ${res.status}`}`, kind: "unknown" });
-        return;
-      }
-      const data = await res.json();
-      const cardId = data.card?.id;
-      if (cardId) {
-        // setCreatedCardIds is async — build the up-to-date map ourselves
-        // instead of reading the (still-stale) createdCardIds afterward,
-        // otherwise tryCreateLinks never sees the card we just created.
-        const updatedIds = { ...createdCardIds, [entity.title]: cardId };
-        setCreatedCardIds(updatedIds);
-        tryCreateLinks(updatedIds);
-      }
-      setEntities((prev) => prev?.filter((_, i) => i !== index) ?? null);
-    } catch {
-      setError({ message: `Couldn't send "${entity.title}" — network error`, kind: "unknown" });
-    }
-  }
 
   function tryCreateLinks(ids: Record<string, string>) {
     for (const link of extractedLinks) {
@@ -658,13 +620,32 @@ export function WorkShopPage({ bookId }: { bookId: string }) {
                     <p className="mb-2 line-clamp-2 text-xs text-[var(--text-2)]">
                       {entity.summary}
                     </p>
-                    <button
-                      onClick={() => handleSendToTab(entity, i)}
-                      className="flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 text-[10px] font-medium text-accent-foreground hover:bg-accent/90"
-                    >
-                      Send to {CATEGORY_LABELS[entity.category] ?? entity.category}
-                      <ArrowRight className="h-2.5 w-2.5" />
-                    </button>
+                    <div className="flex items-center justify-between gap-2">
+                      <NotSavedYetHint />
+                      {bookId && (
+                        <ApplyButton
+                          bookId={bookId}
+                          action={{
+                            kind: "create_card",
+                            category: normalizeCategory(entity.category),
+                            title: entity.title,
+                            summary: entity.summary,
+                            body: entity.body,
+                            tags: entity.tags ?? [],
+                          }}
+                          label={`Send to ${CATEGORY_LABELS[entity.category] ?? entity.category}`}
+                          onApplied={(id) => {
+                            if (id) {
+                              const updatedIds = { ...createdCardIds, [entity.title]: id };
+                              setCreatedCardIds(updatedIds);
+                              tryCreateLinks(updatedIds);
+                            }
+                            setEntities((prev) => prev?.filter((_, idx) => idx !== i) ?? null);
+                          }}
+                          onError={(msg) => setError({ message: `Couldn't send "${entity.title}": ${msg}`, kind: "unknown" })}
+                        />
+                      )}
+                    </div>
                   </div>
                 ))}
                 {extractedLinks.length > 0 && entities.length === 0 && (

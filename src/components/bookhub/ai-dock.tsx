@@ -4,6 +4,8 @@ import { useEffect, useState, useRef } from "react";
 import { Bot, X, Send, Loader2, Sparkles, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AiErrorBanner, type AiErrorInfo } from "@/components/bookhub/ai-error-banner";
+import { ApplyButton, NotSavedYetHint } from "@/components/bookhub/proposed-action-button";
+import { describeProposedAction, type ProposedAction } from "@/lib/ai/proposed-actions";
 
 /* ------------------------------------------------------------------ *
  * AiDock — shared AI chat panel (right side, 400px).
@@ -20,7 +22,7 @@ type ChatMessage = {
   content: string;
   guard?: { rule: string; severity: string; quote: string; suggestion: string }[];
   truncated?: boolean;
-  pendingActions?: Record<string, unknown>[];
+  pendingActions?: ProposedAction[];
 };
 
 export function useAiDock() {
@@ -241,93 +243,10 @@ export function AiDock({
     }
   }
 
-  async function handleCreateCard(candidate: { title: string; summary: string; body: string; tags: string[] }) {
-    if (!scopeData?.bookId || !scopeData?.tab) return;
-    try {
-      await fetch(`/api/books/${scopeData.bookId}/cards`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          category: scopeData.tab,
-          title: candidate.title,
-          summary: candidate.summary,
-          body: candidate.body,
-          canonStatus: "draft",
-          tags: candidate.tags ?? [],
-          fields: [],
-        }),
-      });
-      // Remove from brainstorm results
-      setBrainstormResults((prev) =>
-        prev?.filter((c) => c.title !== candidate.title) ?? null,
-      );
-    } catch {
-      setError({ message: "Failed to create card", kind: "unknown" });
-    }
-  }
-
   // Tracks which pending actions (by messageIndex-actionIndex) have already
-  // been applied or discarded, so re-rendering the same message doesn't
-  // show a button for something already handled.
+  // been applied, so re-rendering the same message doesn't show a button
+  // for something already handled.
   const [handledActions, setHandledActions] = useState<Set<string>>(new Set());
-  const [applyingKey, setApplyingKey] = useState<string | null>(null);
-
-  async function handleApplyAction(action: Record<string, unknown>, key: string) {
-    if (!scopeData?.bookId) return;
-    setApplyingKey(key);
-    try {
-      if (action.kind === "create_card") {
-        const res = await fetch(`/api/books/${scopeData.bookId}/cards`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            category: action.category,
-            title: action.title,
-            summary: action.summary ?? "",
-            body: action.body ?? "",
-            canonStatus: "draft",
-            tags: action.tags ?? [],
-            fields: [],
-          }),
-        });
-        if (!res.ok) throw new Error(`Create failed: HTTP ${res.status}`);
-      } else if (action.kind === "update_card") {
-        const updates: Record<string, unknown> = {};
-        if (action.title !== undefined) updates.title = action.title;
-        if (action.summary !== undefined) updates.summary = action.summary;
-        if (action.body !== undefined) updates.body = action.body;
-        const res = await fetch(`/api/cards/${action.cardId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(updates),
-        });
-        if (!res.ok) throw new Error(`Update failed: HTTP ${res.status}`);
-      } else if (action.kind === "create_link") {
-        const res = await fetch(`/api/books/${scopeData.bookId}/links`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fromCardId: action.fromCardId,
-            toCardId: action.toCardId,
-            label: action.label,
-          }),
-        });
-        if (!res.ok) throw new Error(`Link failed: HTTP ${res.status}`);
-      }
-      setHandledActions((prev) => new Set([...prev, key]));
-    } catch (err) {
-      setError({ message: err instanceof Error ? err.message : "Failed to apply", kind: "unknown" });
-    } finally {
-      setApplyingKey(null);
-    }
-  }
-
-  function describeAction(action: Record<string, unknown>): string {
-    if (action.kind === "create_card") return `Create "${action.title}" (${action.category})`;
-    if (action.kind === "update_card") return `Edit article: ${[action.title && "title", action.summary && "summary", action.body && "body"].filter(Boolean).join(", ")}`;
-    if (action.kind === "create_link") return `Link two articles${action.label ? ` (${action.label})` : ""}`;
-    return "Unknown action";
-  }
 
   if (!open) return null;
 
@@ -415,19 +334,25 @@ export function AiDock({
               <div key={i} className="rounded-lg border border-border bg-background p-3">
                 <div className="text-sm font-medium text-foreground">{c.title}</div>
                 <p className="mt-1 text-xs text-[var(--text-2)]">{c.summary}</p>
-                <div className="mt-2 flex items-center gap-2">
-                  <button
-                    onClick={() => handleCreateCard(c)}
-                    className="rounded-md bg-accent px-2.5 py-1 text-[10px] font-medium text-accent-foreground hover:bg-accent/90"
-                  >
-                    Create card
-                  </button>
-                  <button
-                    onClick={() => setBrainstormResults((prev) => prev?.filter((_, idx) => idx !== i) ?? null)}
-                    className="rounded-md border border-border px-2.5 py-1 text-[10px] text-[var(--text-3)] hover:bg-[var(--surface-2)]"
-                  >
-                    Discard
-                  </button>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <NotSavedYetHint />
+                  <div className="flex items-center gap-2">
+                    {scopeData?.bookId && scopeData?.tab && (
+                      <ApplyButton
+                        bookId={scopeData.bookId}
+                        action={{ kind: "create_card", category: scopeData.tab, title: c.title, summary: c.summary, body: c.body, tags: c.tags }}
+                        label="Create card"
+                        onApplied={() => setBrainstormResults((prev) => prev?.filter((_, idx) => idx !== i) ?? null)}
+                        onError={(msg) => setError({ message: msg, kind: "unknown" })}
+                      />
+                    )}
+                    <button
+                      onClick={() => setBrainstormResults((prev) => prev?.filter((_, idx) => idx !== i) ?? null)}
+                      className="rounded-md border border-border px-2.5 py-1 text-[10px] text-[var(--text-3)] hover:bg-[var(--surface-2)]"
+                    >
+                      Discard
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -495,18 +420,16 @@ export function AiDock({
                         className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/5 px-2.5 py-2"
                       >
                         <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">
-                          {describeAction(action)}
+                          {describeProposedAction(action)}
                         </span>
-                        {applied ? (
-                          <span className="shrink-0 text-[10px] text-emerald-400">Applied</span>
-                        ) : (
-                          <button
-                            onClick={() => handleApplyAction(action, key)}
-                            disabled={applyingKey === key}
-                            className="shrink-0 rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-accent-foreground hover:bg-accent/90 disabled:opacity-50"
-                          >
-                            {applyingKey === key ? "Applying…" : "Apply"}
-                          </button>
+                        {!applied && <NotSavedYetHint />}
+                        {scopeData?.bookId && (
+                          <ApplyButton
+                            bookId={scopeData.bookId}
+                            action={action}
+                            onApplied={() => setHandledActions((prev) => new Set([...prev, key]))}
+                            onError={(msg) => setError({ message: msg, kind: "unknown" })}
+                          />
                         )}
                       </div>
                     );
