@@ -290,7 +290,7 @@ export function AiChatPanel({
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background">
               <Bot className="h-4 w-4 text-[var(--text-3)]" />
             </div>
-            <p className="text-sm font-medium text-foreground">AI Chat</p>
+            <p className="text-sm font-medium text-foreground">Writing Bot</p>
             <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-2)]">
               Ask questions, brainstorm passages, or get unstuck.
             </p>

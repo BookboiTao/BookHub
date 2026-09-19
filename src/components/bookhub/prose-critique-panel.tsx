@@ -98,6 +98,7 @@ export function ProseCritiquePanel({
       <div className="mb-2 flex items-center gap-2">
         <Sparkles className="h-3.5 w-3.5 text-accent" />
         <span className="text-xs font-semibold">Check my prose</span>
+        <span className="text-[10px] text-[var(--text-3)]">— Grammar/Craft Bot</span>
       </div>
       <p className="mb-3 text-[11px] leading-relaxed text-[var(--text-2)]">
         Runs your own draft against the Constitution — mechanical checks instantly, plus an AI critique pass. AI-critique fixes can be accepted directly; mechanical/grammar findings are jump-to-passage only, since their notes are guidance, not literal rewrites.

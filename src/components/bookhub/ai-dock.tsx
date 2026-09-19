@@ -258,7 +258,7 @@ export function AiDock({
       <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3.5">
         <div className="flex items-center gap-2">
           <Bot className="h-4 w-4 text-accent" />
-          <span className="text-[13px] font-medium text-foreground">AI Studio</span>
+          <span className="text-[13px] font-medium text-foreground">Worldbuilding Bot</span>
         </div>
         <button
           onClick={onClose}
