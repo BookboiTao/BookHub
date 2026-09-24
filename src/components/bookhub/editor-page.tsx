@@ -1,10 +1,15 @@
 "use client";
 
 /* ------------------------------------------------------------------ *
- * Chapter editor — 3-pane shell.
+ * Chapter editor — VS Code-style shell.
  *
- * Layout: top bar (56px) + left rail (240px→44px) + center prose +
- * right panel (360px→0) + status strip (32px).
+ * Layout: top bar (56px) + left rail/"Explorer" (240px→44px) + center
+ * prose + right sidebar (Activity Bar icon rail + 320px content pane,
+ * for Lore/Drafts/Writing Bot) + bottom panel (256px, "Problems"-
+ * equivalent, for Grammar/Craft Bot, Story Structure Bot, word stats,
+ * read aloud) + status strip (32px). The bottom panel and right sidebar
+ * both collapse independently; focus mode hides both plus the left
+ * rail, leaving just the prose and the status strip.
  *
  * Loads chapter title/content from the localStorage mock store by id.
  * All carry-over logic from the previous editor preserved:
@@ -45,6 +50,8 @@ import {
   Trash2,
   Bot,
   Send,
+  Compass,
+  PanelBottomClose,
 } from "lucide-react";
 import { useRouter } from "./router";
 import { CrutchWordPanel } from "./crutch-word-panel";
@@ -738,7 +745,7 @@ function TopBar({
         <button
           onClick={onToggleTools}
           className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-foreground"
-          title="Tools"
+          title="Toggle bottom panel (Grammar/Craft Bot, Story Structure Bot, word stats, read aloud)"
         >
           <Wrench className="h-4 w-4" />
         </button>
@@ -845,7 +852,8 @@ function StatusStrip({
  * Main EditorPage
  * ================================================================== */
 
-type RightTab = "lore" | "drafts" | "tools" | "ai";
+type RightTab = "lore" | "drafts" | "ai";
+type BottomTab = "critique" | "structure" | "words" | "readaloud";
 
 export function EditorPage({
   bookId,
@@ -1116,6 +1124,21 @@ export function EditorPage({
     window.localStorage.setItem("bh-editor-panel", panelCollapsed ? "1" : "0");
   }, [panelCollapsed]);
 
+  // Bottom panel — VS Code's "Problems"-equivalent. Grammar/Craft Bot,
+  // Story Structure Bot, word stats, and read-aloud used to be crammed
+  // together inside the right sidebar's "Tools" tab, competing for space
+  // with Lore/Drafts/AI. Split out into its own panel, same shape as
+  // every other VS Code-style editor.
+  const [bottomPanelOpen, setBottomPanelOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("bh-editor-bottom-panel") === "1";
+  });
+  const [bottomTab, setBottomTab] = useState<BottomTab>("critique");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("bh-editor-bottom-panel", bottomPanelOpen ? "1" : "0");
+  }, [bottomPanelOpen]);
+
   /* ----- right panel tab ----- */
   const [activeTab, setActiveTab] = useState<RightTab>("lore");
 
@@ -1313,8 +1336,7 @@ export function EditorPage({
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
 
   const handleToggleTools = () => {
-    setActiveTab("tools");
-    if (panelCollapsed) setPanelCollapsed(false);
+    setBottomPanelOpen((o) => !o);
   };
 
   /**
@@ -1657,37 +1679,54 @@ export function EditorPage({
 
         {/* ============== RIGHT PANEL ============== */}
         {!focusMode && !panelCollapsed && (
-          <aside className="flex w-[360px] shrink-0 flex-col border-l border-border bg-background">
-            {/* tabs */}
-            <div className="flex h-10 shrink-0 items-center border-b border-border px-2">
-              {(["lore", "drafts", "tools", "ai"] as RightTab[]).map((t) => (
+          <aside className="flex shrink-0 border-l border-border bg-background">
+            {/* Activity Bar — narrow icon rail, VS Code-style. Tools (the
+                old 4th tab) doesn't live here anymore — its contents moved
+                to the Bottom Panel, since "checks/diagnostics" and
+                "reference/chat" are different jobs that were competing for
+                the same strip of screen. */}
+            <nav className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border py-2">
+              {([
+                { id: "lore" as RightTab, icon: BookText, title: "Lore" },
+                { id: "drafts" as RightTab, icon: History, title: "Drafts" },
+                { id: "ai" as RightTab, icon: Sparkles, title: "Writing Bot" },
+              ]).map(({ id, icon: Icon, title }) => (
                 <button
-                  key={t}
-                  onClick={() => setActiveTab(t)}
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  title={title}
                   className={cn(
-                    "relative h-full px-3 text-xs font-medium capitalize",
-                    activeTab === t
-                      ? "text-accent"
-                      : "text-[var(--text-2)] hover:text-foreground",
+                    "relative flex h-9 w-9 items-center justify-center rounded-md",
+                    activeTab === id
+                      ? "bg-accent/15 text-accent"
+                      : "text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-foreground",
                   )}
                 >
-                  {t}
-                  {activeTab === t && (
-                    <span className="absolute inset-x-2 bottom-0 h-0.5 bg-accent" />
+                  <Icon className="h-4 w-4" />
+                  {activeTab === id && (
+                    <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-accent" />
                   )}
                 </button>
               ))}
               <button
                 onClick={() => setPanelCollapsed(true)}
-                className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-foreground"
                 title="Hide panel"
+                className="mt-auto flex h-9 w-9 items-center justify-center rounded-md text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-foreground"
               >
                 <PanelRightClose className="h-3.5 w-3.5" />
               </button>
-            </div>
+            </nav>
 
-            {/* tab body */}
-            <div className="bh-scroll min-h-0 flex-1 overflow-y-auto p-4">
+            <div className="flex w-[320px] flex-col">
+              {/* section header */}
+              <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
+                <span className="text-xs font-medium capitalize text-foreground">
+                  {activeTab === "ai" ? "Writing Bot" : activeTab}
+                </span>
+              </div>
+
+              {/* tab body */}
+              <div className="bh-scroll min-h-0 flex-1 overflow-y-auto p-4">
               {/* ----- LORE TAB ----- */}
               {activeTab === "lore" && (
                 <div className="space-y-4">
@@ -1870,119 +1909,6 @@ export function EditorPage({
                 </div>
               )}
 
-              {/* ----- TOOLS TAB ----- */}
-              {activeTab === "tools" && (
-                <div className="space-y-4">
-                  {/* manual "check my prose" — the gap guard.ts's own
-                      comment claimed was already covered but wasn't;
-                      checks what YOU wrote, not just AI output */}
-                  <ProseCritiquePanel bookId={bookId} chapterId={chapterId} text={text} onJumpToQuote={handleJumpToQuote} onApplyFix={handleApplyFix} />
-                  <div className="mt-3">
-                    <StoryStructurePanel bookId={bookId} chapterId={chapterId} />
-                  </div>
-
-                  {/* crutch word panel — uses the imported CrutchWordPanel.
-                   * The component is built as an absolute-positioned popover
-                   * (right-0 top-12 w-80), so we override those classes via
-                   * arbitrary variants on the wrapper to render it inline. */}
-                  <div
-                    className={cn(
-                      "overflow-hidden rounded-lg border border-border bg-card",
-                      "[&>div]:!static [&>div]:!right-auto [&>div]:!top-auto",
-                      "[&>div]:!w-full [&>div]:!shadow-none [&>div]:!rounded-none",
-                      "[&>div]:!border-0 [&>div]:!bg-transparent",
-                    )}
-                  >
-                    <CrutchWordPanel
-                      text={text}
-                      onClose={() => setActiveTab("lore")}
-                    />
-                  </div>
-
-                  {/* read aloud controls */}
-                  <div className="rounded-lg border border-border bg-card p-3">
-                    <div className="mb-2 flex items-center gap-2">
-                      <Volume2 className="h-3.5 w-3.5 text-accent" />
-                      <span className="text-xs font-semibold">Read aloud</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handleReadAloudToggle}
-                        className={cn(
-                          "inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium",
-                          readAloud.speaking
-                            ? "border-accent bg-accent/15 text-accent"
-                            : "border-border text-[var(--text-2)] hover:bg-[var(--surface-2)]",
-                        )}
-                      >
-                        {readAloud.speaking && !readAloud.paused ? (
-                          <>
-                            <Square className="h-3 w-3" /> Stop
-                          </>
-                        ) : readAloud.speaking && readAloud.paused ? (
-                          <>
-                            <Play className="h-3 w-3" /> Resume
-                          </>
-                        ) : (
-                          <>
-                            <Play className="h-3 w-3" /> Play
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    <div className="mt-2 flex items-center gap-2 text-[10px] text-[var(--text-3)]">
-                      <span>Rate</span>
-                      <input
-                        type="range"
-                        min={0.5}
-                        max={1.5}
-                        step={0.05}
-                        value={rate}
-                        onChange={(e) => setRate(parseFloat(e.target.value))}
-                        className="h-1 flex-1 accent-[var(--accent)]"
-                      />
-                      <span className="tabular-nums">{rate.toFixed(2)}×</span>
-                    </div>
-                  </div>
-
-                  {/* word count stats */}
-                  <div className="rounded-lg border border-border bg-card p-3">
-                    <div className="mb-2 flex items-center gap-2">
-                      <FileText className="h-3.5 w-3.5 text-accent" />
-                      <span className="text-xs font-semibold">Word count</span>
-                    </div>
-                    <dl className="space-y-1 text-xs">
-                      <div className="flex justify-between">
-                        <dt className="text-[var(--text-2)]">Total words</dt>
-                        <dd className="tabular-nums text-foreground">
-                          {wordCount.toLocaleString()}
-                        </dd>
-                      </div>
-                      <div className="flex justify-between">
-                        <dt className="text-[var(--text-2)]">
-                          Reading time (200wpm)
-                        </dt>
-                        <dd className="tabular-nums text-foreground">
-                          {Math.max(1, Math.round(wordCount / 200))} min
-                        </dd>
-                      </div>
-                      <div className="flex justify-between">
-                        <dt className="text-[var(--text-2)]">Characters</dt>
-                        <dd className="tabular-nums text-foreground">
-                          {text.length.toLocaleString()}
-                        </dd>
-                      </div>
-                      <div className="flex justify-between">
-                        <dt className="text-[var(--text-2)]">#mentions</dt>
-                        <dd className="tabular-nums text-foreground">
-                          {mentions.length}
-                        </dd>
-                      </div>
-                    </dl>
-                  </div>
-                </div>
-              )}
-
               {/* ----- AI TAB ----- */}
               {activeTab === "ai" && (
                 <AiChatPanel
@@ -2003,6 +1929,7 @@ export function EditorPage({
                   setContinuePreview={setAiContinuePreview}
                 />
               )}
+              </div>
             </div>
           </aside>
         )}
@@ -2018,6 +1945,155 @@ export function EditorPage({
           </button>
         )}
       </div>
+
+      {/* ============== BOTTOM PANEL ============== *
+       * VS Code's "Problems"-equivalent. Grammar/Craft Bot, Story
+       * Structure Bot, word stats, and read-aloud each get their own
+       * tab here instead of being stacked together in the right
+       * sidebar competing with Lore/Drafts/AI for space. */}
+      {!focusMode && bottomPanelOpen && (
+        <div className="flex h-64 shrink-0 flex-col border-t border-border bg-background">
+          <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
+            {([
+              { id: "critique" as BottomTab, label: "Grammar/Craft Bot", icon: Sparkles },
+              { id: "structure" as BottomTab, label: "Story Structure Bot", icon: Compass },
+              { id: "words" as BottomTab, label: "Word Stats", icon: FileText },
+              { id: "readaloud" as BottomTab, label: "Read Aloud", icon: Volume2 },
+            ]).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setBottomTab(id)}
+                className={cn(
+                  "relative flex h-full items-center gap-1.5 px-3 text-xs font-medium",
+                  bottomTab === id ? "text-accent" : "text-[var(--text-2)] hover:text-foreground",
+                )}
+              >
+                <Icon className="h-3 w-3" />
+                {label}
+                {bottomTab === id && (
+                  <span className="absolute inset-x-2 bottom-0 h-0.5 bg-accent" />
+                )}
+              </button>
+            ))}
+            <button
+              onClick={() => setBottomPanelOpen(false)}
+              className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-foreground"
+              title="Close panel"
+            >
+              <PanelBottomClose className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="bh-scroll min-h-0 flex-1 overflow-y-auto p-3">
+            {bottomTab === "critique" && (
+              <ProseCritiquePanel bookId={bookId} chapterId={chapterId} text={text} onJumpToQuote={handleJumpToQuote} onApplyFix={handleApplyFix} />
+            )}
+
+            {bottomTab === "structure" && (
+              <StoryStructurePanel bookId={bookId} chapterId={chapterId} />
+            )}
+
+            {bottomTab === "words" && (
+              <div className="grid grid-cols-2 gap-3">
+                <div
+                  className={cn(
+                    "overflow-hidden rounded-lg border border-border bg-card",
+                    "[&>div]:!static [&>div]:!right-auto [&>div]:!top-auto",
+                    "[&>div]:!w-full [&>div]:!shadow-none [&>div]:!rounded-none",
+                    "[&>div]:!border-0 [&>div]:!bg-transparent",
+                  )}
+                >
+                  <CrutchWordPanel
+                    text={text}
+                    onClose={() => setBottomPanelOpen(false)}
+                  />
+                </div>
+                <div className="rounded-lg border border-border bg-card p-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <FileText className="h-3.5 w-3.5 text-accent" />
+                    <span className="text-xs font-semibold">Word count</span>
+                  </div>
+                  <dl className="space-y-1 text-xs">
+                    <div className="flex justify-between">
+                      <dt className="text-[var(--text-2)]">Total words</dt>
+                      <dd className="tabular-nums text-foreground">
+                        {wordCount.toLocaleString()}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-[var(--text-2)]">
+                        Reading time (200wpm)
+                      </dt>
+                      <dd className="tabular-nums text-foreground">
+                        {Math.max(1, Math.round(wordCount / 200))} min
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-[var(--text-2)]">Characters</dt>
+                      <dd className="tabular-nums text-foreground">
+                        {text.length.toLocaleString()}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-[var(--text-2)]">#mentions</dt>
+                      <dd className="tabular-nums text-foreground">
+                        {mentions.length}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+            )}
+
+            {bottomTab === "readaloud" && (
+              <div className="max-w-sm rounded-lg border border-border bg-card p-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <Volume2 className="h-3.5 w-3.5 text-accent" />
+                  <span className="text-xs font-semibold">Read aloud</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleReadAloudToggle}
+                    className={cn(
+                      "inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium",
+                      readAloud.speaking
+                        ? "border-accent bg-accent/15 text-accent"
+                        : "border-border text-[var(--text-2)] hover:bg-[var(--surface-2)]",
+                    )}
+                  >
+                    {readAloud.speaking && !readAloud.paused ? (
+                      <>
+                        <Square className="h-3 w-3" /> Stop
+                      </>
+                    ) : readAloud.speaking && readAloud.paused ? (
+                      <>
+                        <Play className="h-3 w-3" /> Resume
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3 w-3" /> Play
+                      </>
+                    )}
+                  </button>
+                </div>
+                <div className="mt-2 flex items-center gap-2 text-[10px] text-[var(--text-3)]">
+                  <span>Rate</span>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={1.5}
+                    step={0.05}
+                    value={rate}
+                    onChange={(e) => setRate(parseFloat(e.target.value))}
+                    className="h-1 flex-1 accent-[var(--accent)]"
+                  />
+                  <span className="tabular-nums">{rate.toFixed(2)}×</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <StatusStrip
         wordCount={wordCount}
