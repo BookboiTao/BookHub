@@ -2,7 +2,7 @@
 
 *In the glow of a single, patient screen,*
 *A cosmos takes shape in the quiet dark.*
-*Each flicker of thought, a world yet unseen,*
+*Each flicker of thought, a world yet unseen,**
 *Born from the careful shaping of a mark.*
 
 ---
